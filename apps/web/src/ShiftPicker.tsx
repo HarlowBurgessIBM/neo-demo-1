@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { Shift, SwapPick } from "./contract";
 
@@ -6,6 +6,10 @@ interface ShiftPickerProps {
   give: Shift[];
   take: Shift[];
   onCheck: (pick: SwapPick) => void;
+  /** True while a check is in flight. The button stays focusable but ignores presses. */
+  pending: boolean;
+  /** Move focus to the "Shift to give" select on mount. Off on first load so focus is not stolen. */
+  focusOnMount: boolean;
 }
 
 function describeShift(shift: Shift): string {
@@ -13,13 +17,20 @@ function describeShift(shift: Shift): string {
 }
 
 /** Chooses one shift to give and one to take. Every value shown is the API's own string. */
-export function ShiftPicker({ give, take, onCheck }: ShiftPickerProps) {
+export function ShiftPicker({ give, take, onCheck, pending, focusOnMount }: ShiftPickerProps) {
   const [giveShiftId, setGiveShiftId] = useState("");
   const [takeShiftId, setTakeShiftId] = useState("");
+  const giveSelectRef = useRef<HTMLSelectElement>(null);
+
+  useEffect(() => {
+    if (focusOnMount) {
+      giveSelectRef.current?.focus();
+    }
+  }, [focusOnMount]);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (giveShiftId === "" || takeShiftId === "") {
+    if (pending || giveShiftId === "" || takeShiftId === "") {
       return;
     }
     onCheck({ giveShiftId, takeShiftId });
@@ -32,6 +43,7 @@ export function ShiftPicker({ give, take, onCheck }: ShiftPickerProps) {
         <label htmlFor="shift-to-give">Shift to give</label>{" "}
         <select
           id="shift-to-give"
+          ref={giveSelectRef}
           value={giveShiftId}
           onChange={(event) => {
             setGiveShiftId(event.target.value);
@@ -62,7 +74,7 @@ export function ShiftPicker({ give, take, onCheck }: ShiftPickerProps) {
           ))}
         </select>
       </div>
-      <button type="submit" disabled={giveShiftId === "" || takeShiftId === ""}>
+      <button type="submit" disabled={giveShiftId === "" || takeShiftId === ""} aria-disabled={pending}>
         Check swap
       </button>
     </form>

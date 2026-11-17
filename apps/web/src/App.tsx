@@ -20,7 +20,7 @@ function describeFailure(result: Exclude<GetResult<unknown>, { kind: "ok" }>, wh
 }
 
 type View =
-  | { kind: "picker"; message: string | undefined }
+  | { kind: "picker"; message: string | undefined; focusGive: boolean }
   | { kind: "refused"; body: RefusedResponse }
   | { kind: "not-evaluated" };
 
@@ -42,11 +42,11 @@ function viewFor(result: SwapCheckResult): View {
     case "not-evaluated":
       return { kind: "not-evaluated" };
     case "forbidden":
-      return { kind: "picker", message: describeForbidden(result.body.code) };
+      return { kind: "picker", message: describeForbidden(result.body.code), focusGive: false };
     case "unauthenticated":
-      return { kind: "picker", message: "You are not signed in, so the swap could not be checked." };
+      return { kind: "picker", message: "You are not signed in, so the swap could not be checked.", focusGive: false };
     case "error":
-      return { kind: "picker", message: `Could not check the swap. ${result.message}` };
+      return { kind: "picker", message: `Could not check the swap. ${result.message}`, focusGive: false };
   }
 }
 
@@ -57,7 +57,8 @@ export function App() {
   const [identity, setIdentity] = useState<Identity | undefined>(undefined);
   const [shifts, setShifts] = useState<ShiftsResponse | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
-  const [view, setView] = useState<View>({ kind: "picker", message: undefined });
+  const [view, setView] = useState<View>({ kind: "picker", message: undefined, focusGive: false });
+  const [checking, setChecking] = useState(false);
   const checkSequence = useRef(0);
 
   useEffect(() => {
@@ -102,19 +103,23 @@ export function App() {
     checkSequence.current += 1;
     setShifts(undefined);
     setError(undefined);
-    setView({ kind: "picker", message: undefined });
+    setView({ kind: "picker", message: undefined, focusGive: false });
+    setChecking(false);
     setIdentity(selected);
   }
 
   function handleChooseAgain() {
-    setView({ kind: "picker", message: undefined });
+    // The button the user pressed is about to unmount, so hand focus to the first field.
+    setView({ kind: "picker", message: undefined, focusGive: true });
   }
 
   function handleCheck(pick: SwapPick) {
     checkSequence.current += 1;
     const sequence = checkSequence.current;
+    setChecking(true);
     void postSwapCheck(isProduction ? undefined : identity, pick).then((result) => {
       if (sequence !== checkSequence.current) return;
+      setChecking(false);
       setView(viewFor(result));
     });
   }
@@ -128,18 +133,26 @@ export function App() {
       {shifts === undefined ? null : (
         <>
           <Notices shifts={shifts} />
+          {/* Only the result is announced, never the form and its options. */}
           <div aria-live="polite">
             {view.kind === "refused" ? (
               <RefusalView refusal={view.body} onChooseAgain={handleChooseAgain} />
             ) : view.kind === "not-evaluated" ? (
               <NotEvaluated onChooseAgain={handleChooseAgain} />
-            ) : (
-              <>
-                {view.message === undefined ? null : <p role="alert">{view.message}</p>}
-                <ShiftPicker give={shifts.give} take={shifts.take} onCheck={handleCheck} />
-              </>
-            )}
+            ) : null}
           </div>
+          {view.kind === "picker" ? (
+            <>
+              {view.message === undefined ? null : <p role="alert">{view.message}</p>}
+              <ShiftPicker
+                give={shifts.give}
+                take={shifts.take}
+                onCheck={handleCheck}
+                pending={checking}
+                focusOnMount={view.focusGive}
+              />
+            </>
+          ) : null}
         </>
       )}
     </main>
