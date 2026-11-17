@@ -243,30 +243,6 @@ describe("C17: take entries name their owner and carry no employee number", () =
     const asNumber = [{ ...first, extra: Number(rosterNumbers[1]) }];
     expect(leafValues(asNumber).filter((value) => rosterNumbers.includes(value))).toEqual([rosterNumbers[1]]);
   });
-
-  test("registration throws when a shift's owner is not an operator, without naming the number", () => {
-    const stranger = "999999";
-    const badRoster = structuredClone(roster);
-    const target = badRoster.shifts[3];
-    expect(target).toBeDefined();
-    if (target === undefined) {
-      return;
-    }
-    expect(rosterNumbers).not.toContain(stranger);
-    target.employeeNumber = stranger;
-
-    let thrown: unknown;
-    try {
-      buildApp({ roster: badRoster });
-    } catch (error) {
-      thrown = error;
-    }
-
-    expect(thrown).toBeInstanceOf(Error);
-    const message = thrown instanceof Error ? thrown.message : "";
-    expect(message).toContain("shifts[3].employeeNumber");
-    expect(message).not.toContain(stranger);
-  });
 });
 
 describe("C4: export time", () => {

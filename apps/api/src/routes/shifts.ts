@@ -12,9 +12,12 @@ export interface Shift {
   end: string;
 }
 
-/** Another operator's shift on offer: carries the owner's name, and still no employee number. */
+/**
+ * Another operator's shift on offer: carries the owner's name, and still no employee number.
+ * `ownerName` is null when the holder is not a roster operator.
+ */
 export interface TakeShift extends Shift {
-  ownerName: string;
+  ownerName: string | null;
 }
 
 export interface ShiftsResponse {
@@ -49,7 +52,7 @@ function byStartThenId(a: RosterShift, b: RosterShift): number {
 
 /**
  * Registers GET /api/shifts. Throws if the roster `exportedAt` or site time zone cannot be
- * rendered, or if a shift's employee number is not an operator's. Messages name no values.
+ * rendered. The message names no values.
  */
 export function registerShiftsRoute(app: FastifyInstance, roster: Roster): void {
   const rendering = renderExportedAt(roster.exportedAt, roster.site.timeZone);
@@ -57,20 +60,10 @@ export function registerShiftsRoute(app: FastifyInstance, roster: Roster): void 
     throw new Error(`roster export time cannot be rendered: ${rendering.problem}`);
   }
   const operatorNames = new Map(roster.operators.map((operator) => [operator.employeeNumber, operator.name]));
-  roster.shifts.forEach((shift, index) => {
-    if (!operatorNames.has(shift.employeeNumber)) {
-      throw new Error(`roster: shifts[${index}].employeeNumber is not the employee number of an operator`);
-    }
-  });
   const sorted = [...roster.shifts].sort(byStartThenId);
 
   function toTakeShift(shift: RosterShift): TakeShift {
-    const ownerName = operatorNames.get(shift.employeeNumber);
-    if (ownerName === undefined) {
-      // Unreachable: every shift owner was checked above.
-      throw new Error("roster: a shift owner is not an operator");
-    }
-    return { ...toShift(shift), ownerName };
+    return { ...toShift(shift), ownerName: operatorNames.get(shift.employeeNumber) ?? null };
   }
 
   app.get(
