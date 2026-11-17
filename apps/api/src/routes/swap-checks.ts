@@ -58,7 +58,8 @@ export function registerSwapChecksRoute(app: FastifyInstance, roster: Roster): v
       schema: {
         body: {
           type: "object",
-          // Unknown body properties are stripped by Fastify's default Ajv and never reach the handler.
+          // Fastify's default Ajv (`removeAdditional`) strips unknown properties because of this keyword; they are not rejected.
+          additionalProperties: false,
           required: ["giveShiftId", "takeShiftId"],
           properties: {
             giveShiftId: { type: "string", minLength: 1 },
