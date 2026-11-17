@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance, type FastifyServerOptions, type RouteOpt
 import { defaultRosterPath } from "./config";
 import { loadRoster, type Roster } from "./roster";
 import { registerShiftsRoute } from "./routes/shifts";
+import { registerSwapChecksRoute } from "./routes/swap-checks";
 
 export interface BuildAppOptions {
   fastify?: FastifyServerOptions;
@@ -30,8 +31,9 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
 
   registerShiftsRoute(app, roster);
 
-  // Later units register POST /api/swap-checks here, and GET /api/dev/users only when
-  // `options.nodeEnv !== "production"`.
+  registerSwapChecksRoute(app, roster);
+
+  // A later unit registers GET /api/dev/users here, only when `options.nodeEnv !== "production"`.
 
   return app;
 }
