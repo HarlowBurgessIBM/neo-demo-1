@@ -4,6 +4,13 @@
 /** Identifies the policy revision a decision was evaluated against. */
 export const POLICY_REVISION = "VE-HSSE-STD-014 rev 3";
 
+export { assessDeterminability } from "./determinability";
+export type {
+  CannotDetermineReason,
+  Determinability,
+  ExportField,
+  Party,
+} from "./determinability";
 export { renderExportedAt } from "./exported-at";
 export type { ExportedAtProblem, ExportedAtRendering } from "./exported-at";
 export {
