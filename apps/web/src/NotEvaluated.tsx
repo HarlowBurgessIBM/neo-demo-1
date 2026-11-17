@@ -4,7 +4,7 @@ interface NotEvaluatedProps {
   onChooseAgain: () => void;
 }
 
-/** The API passed the pilot-scope checks but cannot evaluate yet (501). No outcome is shown. */
+/** The API passed the pilot-scope checks and found no failure, but cannot approve yet (501). No outcome is shown. */
 export function NotEvaluated({ onChooseAgain }: NotEvaluatedProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
 

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { getDevUsers, getShifts, postSwapCheck } from "./api";
 import type { GetResult, SwapCheckResult } from "./api";
 import type {
+  CannotBeApprovedResponse,
   CannotDetermineResponse,
   DevUser,
   ForbiddenResponse,
@@ -10,6 +11,7 @@ import type {
   ShiftsResponse,
   SwapPick,
 } from "./contract";
+import { CannotBeApprovedView } from "./CannotBeApprovedView";
 import { CannotDetermineView } from "./CannotDetermineView";
 import { DevUserSwitcher } from "./DevUserSwitcher";
 import { NotEvaluated } from "./NotEvaluated";
@@ -34,6 +36,7 @@ type View =
   | { kind: "picker"; message: string | undefined; focusGive: boolean }
   | { kind: "refused"; body: RefusedResponse }
   | { kind: "cannot-determine"; body: CannotDetermineResponse }
+  | { kind: "cannot-be-approved"; body: CannotBeApprovedResponse }
   | { kind: "not-evaluated" };
 
 function describeForbidden(code: ForbiddenResponse["code"]): string {
@@ -55,6 +58,8 @@ function viewFor(result: SwapCheckResult): View {
       return { kind: "not-evaluated" };
     case "cannot-determine":
       return { kind: "cannot-determine", body: result.body };
+    case "cannot-be-approved":
+      return { kind: "cannot-be-approved", body: result.body };
     case "roster-unavailable":
       return {
         kind: "picker",
@@ -150,7 +155,9 @@ export function App() {
       <p>Port Alder Refinery — shift swap requests.</p>
       {isProduction ? null : <DevUserSwitcher users={devUsers} onSelect={handleSelect} />}
       {error === undefined ? null : <p role="alert">{error}</p>}
-      {shifts === undefined ? null : <Notices stamp={view.kind === "cannot-determine" ? view.body : shifts} />}
+      {shifts === undefined ? null : (
+        <Notices stamp={view.kind === "cannot-determine" || view.kind === "cannot-be-approved" ? view.body : shifts} />
+      )}
       {/* Always mounted. Only the pending state and the result are announced, never the form. */}
       <div aria-live="polite">
         {checking ? <p>Checking…</p> : null}
@@ -158,6 +165,8 @@ export function App() {
           <RefusalView refusal={view.body} onChooseAgain={handleChooseAgain} />
         ) : view.kind === "cannot-determine" ? (
           <CannotDetermineView result={view.body} onChooseAgain={handleChooseAgain} />
+        ) : view.kind === "cannot-be-approved" ? (
+          <CannotBeApprovedView result={view.body} onChooseAgain={handleChooseAgain} />
         ) : view.kind === "not-evaluated" ? (
           <NotEvaluated onChooseAgain={handleChooseAgain} />
         ) : null}

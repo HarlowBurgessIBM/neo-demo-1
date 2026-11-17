@@ -52,12 +52,38 @@ function describeExportProblem(
   }
 }
 
+const QUALIFICATION_PART: Record<
+  "operators.qualifications.unit" | "operators.qualifications.role" | "operators.qualifications.validThrough",
+  string
+> = {
+  "operators.qualifications.unit": "unit",
+  "operators.qualifications.role": "role",
+  "operators.qualifications.validThrough": "valid-through date",
+};
+
+/** A qualification record or shift field the roster export is missing or has malformed. */
+function describeEmployeeFieldProblem(
+  reason: Extract<CannotDetermineReason, { code: "invalid-export-field"; party: CannotDetermineParty }>,
+): string {
+  const owner = whose(reason.party);
+  if ("shiftId" in reason) {
+    const part = reason.field === "shifts.unit" ? "unit" : "role";
+    return `In the roster export, ${owner} shift ${reason.shiftId} has a ${reason.problem} ${part}.`;
+  }
+  // `index` counts from 0 on the wire; people count records from 1.
+  const record = `${owner} qualification record ${reason.index + 1}`;
+  if (reason.field === "operators.qualifications") {
+    return `In the roster export, ${record} is ${reason.problem}.`;
+  }
+  return `In the roster export, ${record} has a ${reason.problem} ${QUALIFICATION_PART[reason.field]}.`;
+}
+
 function describeReason(reason: CannotDetermineReason): string {
   switch (reason.code) {
     case "invalid-now":
       return "The current time used for the check is not valid.";
     case "invalid-export-field":
-      return describeExportProblem(reason.field, reason.problem);
+      return "party" in reason ? describeEmployeeFieldProblem(reason) : describeExportProblem(reason.field, reason.problem);
     case "coverage-mismatch":
       return `The roster export's ${reason.field} is ${reason.actual}, but ${reason.expected} was expected.`;
     case "now-before-export":

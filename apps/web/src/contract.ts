@@ -66,6 +66,28 @@ export type CannotDetermineReason =
       field: CannotDetermineExportField;
       problem: "missing" | "malformed" | "unknown-time-zone" | "from-after-to";
     }
+  // `index` is the 0-based position in the owner's qualification list. `party` is never a name or number.
+  | {
+      code: "invalid-export-field";
+      field: "operators.qualifications";
+      party: CannotDetermineParty;
+      index: number;
+      problem: "missing" | "malformed";
+    }
+  | {
+      code: "invalid-export-field";
+      field: "operators.qualifications.unit" | "operators.qualifications.role" | "operators.qualifications.validThrough";
+      party: CannotDetermineParty;
+      index: number;
+      problem: "missing" | "malformed";
+    }
+  | {
+      code: "invalid-export-field";
+      field: "shifts.unit" | "shifts.role";
+      party: CannotDetermineParty;
+      shiftId: string;
+      problem: "missing" | "malformed";
+    }
   | { code: "coverage-mismatch"; field: "coverage.from" | "coverage.to"; actual: string; expected: string }
   | { code: "now-before-export"; exportedAt: string; now: string }
   // `ageMinutes` is the 0-59 remainder after whole hours, not the total age in minutes.
@@ -86,6 +108,66 @@ export interface CannotDetermineResponse {
   exportedAtSiteLocal: string | null;
   siteTimeZone: string | null;
   reasons: CannotDetermineReason[];
+}
+
+/**
+ * A gap between two consecutive shifts, as the API measured it. `hours` and `minutes` are the
+ * elapsed off-duty time; the web app shows them as sent and never works them out from `from`/`to`.
+ */
+export interface OffDutyPeriod {
+  fromShiftId: string;
+  toShiftId: string;
+  from: string;
+  to: string;
+  hours: number;
+  minutes: number;
+}
+
+/** A § 3.1 finding: an off-duty period under the minimum. `overlap` is present only when the shifts overlap. */
+export interface OffDutyFinding extends OffDutyPeriod {
+  rule: "3.1";
+  code: "off-duty-under-minimum";
+  changedBySwap: boolean;
+  minimumHours: number;
+  overlap?: true;
+}
+
+/** A § 3.3 finding: the employee is not qualified for the unit and role on the shift's start date. */
+export interface QualificationFinding {
+  rule: "3.3";
+  code: "qualification-expired" | "no-qualification-for-unit-and-role";
+  changedBySwap: boolean;
+  shiftId: string;
+  unit: string;
+  role: string;
+  shiftStartDate: string;
+  validThrough: string | null;
+}
+
+export type Finding = OffDutyFinding | QualificationFinding;
+
+/** One employee's part of a cannot-be-approved result. "You" is always the give party. */
+export interface EmployeeResult {
+  party: CannotDetermineParty;
+  /** Null when the roster has no name for the employee. */
+  name: string | null;
+  gaveShiftId: string;
+  tookShiftId: string;
+  /** Null when no neighbouring shift is in the export's coverage. */
+  offDutyBefore: OffDutyPeriod | null;
+  offDutyAfter: OffDutyPeriod | null;
+  findings: Finding[];
+}
+
+/** 200. The swap fails § 3.1 or § 3.3 and cannot be approved. `outcome` marks a swap check answer. */
+export interface CannotBeApprovedResponse {
+  outcome: "cannot-be-approved";
+  exportedAt: string | null;
+  exportedAtUtcMinute: string | null;
+  exportedAtSiteLocal: string | null;
+  siteTimeZone: string | null;
+  guidance: string;
+  employees: EmployeeResult[];
 }
 
 /** 503. The roster could not be read. The body carries no other detail. */

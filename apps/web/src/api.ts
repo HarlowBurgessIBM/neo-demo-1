@@ -1,4 +1,5 @@
 import type {
+  CannotBeApprovedResponse,
   CannotDetermineResponse,
   DevUsersResponse,
   ForbiddenResponse,
@@ -36,6 +37,7 @@ export type SwapCheckResult =
   | { kind: "refused"; body: RefusedResponse }
   | { kind: "not-evaluated"; body: NotEvaluatedResponse }
   | { kind: "cannot-determine"; body: CannotDetermineResponse }
+  | { kind: "cannot-be-approved"; body: CannotBeApprovedResponse }
   | RosterUnavailable
   | Unauthenticated
   | Forbidden
@@ -83,6 +85,43 @@ function isCannotDetermineBody(body: unknown): body is CannotDetermineResponse {
   return (
     Array.isArray(reasons) &&
     reasons.every((reason) => isRecord(reason) && typeof reason["code"] === "string") &&
+    isStringOrNull(body["exportedAt"]) &&
+    isStringOrNull(body["exportedAtUtcMinute"]) &&
+    isStringOrNull(body["exportedAtSiteLocal"]) &&
+    isStringOrNull(body["siteTimeZone"])
+  );
+}
+
+function isEmployeeResult(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const findings = value["findings"];
+  const before = value["offDutyBefore"];
+  const after = value["offDutyAfter"];
+  // The view reads these fields directly, so each must have the type it is read as.
+  return (
+    typeof value["party"] === "string" &&
+    isStringOrNull(value["name"]) &&
+    Array.isArray(findings) &&
+    findings.every(
+      (finding) => isRecord(finding) && typeof finding["rule"] === "string" && typeof finding["code"] === "string",
+    ) &&
+    (before === null || isRecord(before)) &&
+    (after === null || isRecord(after))
+  );
+}
+
+function isCannotBeApprovedBody(body: unknown): body is CannotBeApprovedResponse {
+  if (!isRecord(body) || body["outcome"] !== "cannot-be-approved") {
+    return false;
+  }
+  const employees = body["employees"];
+  return (
+    typeof body["guidance"] === "string" &&
+    Array.isArray(employees) &&
+    employees.length === 2 &&
+    employees.every(isEmployeeResult) &&
     isStringOrNull(body["exportedAt"]) &&
     isStringOrNull(body["exportedAtUtcMinute"]) &&
     isStringOrNull(body["exportedAtSiteLocal"]) &&
@@ -196,6 +235,9 @@ export async function postSwapCheck(identity: Identity | undefined, pick: SwapPi
   }
   if (outcome.status === 200 && isCannotDetermineBody(outcome.body)) {
     return { kind: "cannot-determine", body: outcome.body };
+  }
+  if (outcome.status === 200 && isCannotBeApprovedBody(outcome.body)) {
+    return { kind: "cannot-be-approved", body: outcome.body };
   }
   if (outcome.status === 503 && isRosterUnavailableBody(outcome.body)) {
     return { kind: "roster-unavailable" };
