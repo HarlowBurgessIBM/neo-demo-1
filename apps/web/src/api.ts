@@ -50,7 +50,12 @@ function isForbiddenBody(body: unknown): body is ForbiddenResponse {
 }
 
 function isRefusedBody(body: unknown): body is RefusedResponse {
-  return isRecord(body) && body["kind"] === "refused" && Array.isArray(body["reasons"]);
+  if (!isRecord(body) || body["kind"] !== "refused") {
+    return false;
+  }
+  const reasons = body["reasons"];
+  // Each reason must be an object with a string code, so the view can always read `code`.
+  return Array.isArray(reasons) && reasons.every((reason) => isRecord(reason) && typeof reason["code"] === "string");
 }
 
 function isNotEvaluatedBody(body: unknown): body is NotEvaluatedResponse {

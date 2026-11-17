@@ -130,17 +130,18 @@ export function App() {
       <p>Port Alder Refinery — shift swap requests.</p>
       {isProduction ? null : <DevUserSwitcher users={devUsers} onSelect={handleSelect} />}
       {error === undefined ? null : <p role="alert">{error}</p>}
+      {shifts === undefined ? null : <Notices shifts={shifts} />}
+      {/* Always mounted. Only the pending state and the result are announced, never the form. */}
+      <div aria-live="polite">
+        {checking ? <p>Checking…</p> : null}
+        {shifts === undefined ? null : view.kind === "refused" ? (
+          <RefusalView refusal={view.body} onChooseAgain={handleChooseAgain} />
+        ) : view.kind === "not-evaluated" ? (
+          <NotEvaluated onChooseAgain={handleChooseAgain} />
+        ) : null}
+      </div>
       {shifts === undefined ? null : (
         <>
-          <Notices shifts={shifts} />
-          {/* Only the result is announced, never the form and its options. */}
-          <div aria-live="polite">
-            {view.kind === "refused" ? (
-              <RefusalView refusal={view.body} onChooseAgain={handleChooseAgain} />
-            ) : view.kind === "not-evaluated" ? (
-              <NotEvaluated onChooseAgain={handleChooseAgain} />
-            ) : null}
-          </div>
           {view.kind === "picker" ? (
             <>
               {view.message === undefined ? null : <p role="alert">{view.message}</p>}
