@@ -1,7 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { getDevUsers, getShifts, postSwapCheck } from "./api";
 import type { GetResult, SwapCheckResult } from "./api";
-import type { DevUser, ForbiddenResponse, Identity, RefusedResponse, ShiftsResponse, SwapPick } from "./contract";
+import type {
+  CannotDetermineResponse,
+  DevUser,
+  ForbiddenResponse,
+  Identity,
+  RefusedResponse,
+  ShiftsResponse,
+  SwapPick,
+} from "./contract";
+import { CannotDetermineView } from "./CannotDetermineView";
 import { DevUserSwitcher } from "./DevUserSwitcher";
 import { NotEvaluated } from "./NotEvaluated";
 import { Notices } from "./Notices";
@@ -14,6 +23,8 @@ function describeFailure(result: Exclude<GetResult<unknown>, { kind: "ok" }>, wh
       return `You are not signed in, so ${what} could not be loaded.`;
     case "forbidden":
       return `You are not permitted to see ${what}.`;
+    case "roster-unavailable":
+      return `The roster is unavailable right now, so ${what} could not be loaded. Try again later.`;
     case "error":
       return `Could not load ${what}. ${result.message}`;
   }
@@ -22,6 +33,7 @@ function describeFailure(result: Exclude<GetResult<unknown>, { kind: "ok" }>, wh
 type View =
   | { kind: "picker"; message: string | undefined; focusGive: boolean }
   | { kind: "refused"; body: RefusedResponse }
+  | { kind: "cannot-determine"; body: CannotDetermineResponse }
   | { kind: "not-evaluated" };
 
 function describeForbidden(code: ForbiddenResponse["code"]): string {
@@ -41,6 +53,14 @@ function viewFor(result: SwapCheckResult): View {
       return { kind: "refused", body: result.body };
     case "not-evaluated":
       return { kind: "not-evaluated" };
+    case "cannot-determine":
+      return { kind: "cannot-determine", body: result.body };
+    case "roster-unavailable":
+      return {
+        kind: "picker",
+        message: "The roster is unavailable right now, so the swap could not be checked. Try again later.",
+        focusGive: false,
+      };
     case "forbidden":
       return { kind: "picker", message: describeForbidden(result.body.code), focusGive: false };
     case "unauthenticated":
@@ -130,12 +150,14 @@ export function App() {
       <p>Port Alder Refinery — shift swap requests.</p>
       {isProduction ? null : <DevUserSwitcher users={devUsers} onSelect={handleSelect} />}
       {error === undefined ? null : <p role="alert">{error}</p>}
-      {shifts === undefined ? null : <Notices shifts={shifts} />}
+      {shifts === undefined ? null : <Notices stamp={view.kind === "cannot-determine" ? view.body : shifts} />}
       {/* Always mounted. Only the pending state and the result are announced, never the form. */}
       <div aria-live="polite">
         {checking ? <p>Checking…</p> : null}
         {shifts === undefined ? null : view.kind === "refused" ? (
           <RefusalView refusal={view.body} onChooseAgain={handleChooseAgain} />
+        ) : view.kind === "cannot-determine" ? (
+          <CannotDetermineView result={view.body} onChooseAgain={handleChooseAgain} />
         ) : view.kind === "not-evaluated" ? (
           <NotEvaluated onChooseAgain={handleChooseAgain} />
         ) : null}

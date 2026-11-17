@@ -18,11 +18,12 @@ export interface TakeShift extends Shift {
   ownerName: string | null;
 }
 
+/** The four export stamp fields are all strings or all null, when the export time cannot be rendered. */
 export interface ShiftsResponse {
-  exportedAt: string;
-  exportedAtUtcMinute: string;
-  exportedAtSiteLocal: string;
-  siteTimeZone: string;
+  exportedAt: string | null;
+  exportedAtUtcMinute: string | null;
+  exportedAtSiteLocal: string | null;
+  siteTimeZone: string | null;
   give: Shift[];
   take: TakeShift[];
 }
@@ -42,6 +43,53 @@ export type RefusalReason =
 export interface RefusedResponse {
   kind: "refused";
   reasons: RefusalReason[];
+}
+
+/** Which side of the swap a reason is about. */
+export type CannotDetermineParty = "give-shift-owner" | "take-shift-owner";
+
+/** A roster export field a reason can name. */
+export type CannotDetermineExportField =
+  | "exportedAt"
+  | "site.timeZone"
+  | "coverage"
+  | "coverage.from"
+  | "coverage.to"
+  | "shifts"
+  | "operators";
+
+/** Why a swap could not be checked. Every value is shown as the API sent it. */
+export type CannotDetermineReason =
+  | { code: "invalid-now" }
+  | {
+      code: "invalid-export-field";
+      field: CannotDetermineExportField;
+      problem: "missing" | "malformed" | "unknown-time-zone" | "from-after-to";
+    }
+  | { code: "coverage-mismatch"; field: "coverage.from" | "coverage.to"; actual: string; expected: string }
+  | { code: "now-before-export"; exportedAt: string; now: string }
+  | { code: "export-stale"; ageHours: number; ageMinutes: number; limitHours: 26 }
+  | { code: "missing-shift"; shiftId: string }
+  | { code: "owner-not-operator"; shiftId: string; party: CannotDetermineParty }
+  | { code: "qualifications-missing"; shiftId: string; party: CannotDetermineParty; problem: "absent" | "empty" }
+  | { code: "shift-time-malformed"; shiftId: string; field: "start" | "end" }
+  | { code: "shift-outside-horizon"; shiftId: string; start: string; horizonFrom: string; horizonTo: string }
+  | { code: "nonexistent-local-time"; shiftId: string; field: "start" | "end"; value: string }
+  | { code: "ambiguous-local-time"; shiftId: string; field: "start" | "end"; value: string };
+
+/** 200. The roster data cannot support a result. It has no `kind`: `outcome` marks a swap check answer. */
+export interface CannotDetermineResponse {
+  outcome: "cannot-determine";
+  exportedAt: string | null;
+  exportedAtUtcMinute: string | null;
+  exportedAtSiteLocal: string | null;
+  siteTimeZone: string | null;
+  reasons: CannotDetermineReason[];
+}
+
+/** 503. The roster could not be read. The body carries no other detail. */
+export interface RosterUnavailableResponse {
+  code: "roster-unavailable";
 }
 
 /** 501. Evaluation is not wired in yet. */

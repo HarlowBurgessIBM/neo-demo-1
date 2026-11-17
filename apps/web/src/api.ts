@@ -1,9 +1,11 @@
 import type {
+  CannotDetermineResponse,
   DevUsersResponse,
   ForbiddenResponse,
   Identity,
   NotEvaluatedResponse,
   RefusedResponse,
+  RosterUnavailableResponse,
   ShiftsResponse,
   SwapPick,
 } from "./contract";
@@ -24,11 +26,17 @@ export interface Forbidden {
   body: ForbiddenResponse;
 }
 
-export type GetResult<T> = { kind: "ok"; data: T } | Unauthenticated | Forbidden | ApiError;
+export interface RosterUnavailable {
+  kind: "roster-unavailable";
+}
+
+export type GetResult<T> = { kind: "ok"; data: T } | Unauthenticated | Forbidden | RosterUnavailable | ApiError;
 
 export type SwapCheckResult =
   | { kind: "refused"; body: RefusedResponse }
   | { kind: "not-evaluated"; body: NotEvaluatedResponse }
+  | { kind: "cannot-determine"; body: CannotDetermineResponse }
+  | RosterUnavailable
   | Unauthenticated
   | Forbidden
   | ApiError;
@@ -60,6 +68,30 @@ function isRefusedBody(body: unknown): body is RefusedResponse {
 
 function isNotEvaluatedBody(body: unknown): body is NotEvaluatedResponse {
   return isRecord(body) && body["kind"] === "not-evaluated";
+}
+
+function isStringOrNull(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function isCannotDetermineBody(body: unknown): body is CannotDetermineResponse {
+  if (!isRecord(body) || body["outcome"] !== "cannot-determine") {
+    return false;
+  }
+  const reasons = body["reasons"];
+  // Each reason must be an object with a string code, so the view can always read `code`.
+  return (
+    Array.isArray(reasons) &&
+    reasons.every((reason) => isRecord(reason) && typeof reason["code"] === "string") &&
+    isStringOrNull(body["exportedAt"]) &&
+    isStringOrNull(body["exportedAtUtcMinute"]) &&
+    isStringOrNull(body["exportedAtSiteLocal"]) &&
+    isStringOrNull(body["siteTimeZone"])
+  );
+}
+
+function isRosterUnavailableBody(body: unknown): body is RosterUnavailableResponse {
+  return isRecord(body) && body["code"] === "roster-unavailable";
 }
 
 /**
@@ -121,6 +153,9 @@ async function getJson<T>(
     }
     return { kind: "error", status: 200, message: "The server answered with an unexpected response." };
   }
+  if (outcome.status === 503 && isRosterUnavailableBody(outcome.body)) {
+    return { kind: "roster-unavailable" };
+  }
   return commonFailure(outcome) ?? httpError(outcome.status);
 }
 
@@ -158,6 +193,12 @@ export async function postSwapCheck(identity: Identity | undefined, pick: SwapPi
   });
   if ("kind" in outcome) {
     return outcome;
+  }
+  if (outcome.status === 200 && isCannotDetermineBody(outcome.body)) {
+    return { kind: "cannot-determine", body: outcome.body };
+  }
+  if (outcome.status === 503 && isRosterUnavailableBody(outcome.body)) {
+    return { kind: "roster-unavailable" };
   }
   if (outcome.status === 422 && isRefusedBody(outcome.body)) {
     return { kind: "refused", body: outcome.body };

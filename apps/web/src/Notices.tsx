@@ -1,12 +1,19 @@
-import type { ShiftsResponse } from "./contract";
-
 interface NoticesProps {
-  shifts: ShiftsResponse;
+  /** The export stamp the shown shifts or result were read against. Each field is null when it could not be rendered. */
+  stamp: {
+    exportedAtUtcMinute: string | null;
+    exportedAtSiteLocal: string | null;
+    siteTimeZone: string | null;
+  };
 }
 
 /** The pilot notices. Shown on every view once the shifts are loaded. Values are displayed as the API sent them. */
-export function Notices({ shifts }: NoticesProps) {
-  const exported = `Roster exported ${shifts.exportedAtUtcMinute} UTC (${shifts.exportedAtSiteLocal} site time, ${shifts.siteTimeZone}).`;
+export function Notices({ stamp }: NoticesProps) {
+  const { exportedAtUtcMinute, exportedAtSiteLocal, siteTimeZone } = stamp;
+  const exported =
+    exportedAtUtcMinute === null || exportedAtSiteLocal === null || siteTimeZone === null
+      ? "Roster export time unavailable."
+      : `Roster exported ${exportedAtUtcMinute} UTC (${exportedAtSiteLocal} site time, ${siteTimeZone}).`;
   return (
     <aside aria-label="Pilot notices">
       <p>{exported}</p>
