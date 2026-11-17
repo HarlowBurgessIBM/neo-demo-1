@@ -1,7 +1,7 @@
 import type { FastifyInstance, InjectOptions, RouteOptions } from "fastify";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { buildApp } from "./app";
-import { headersFor, readSampleRoster } from "./test-support";
+import { fixedNow, headersFor, readSampleRoster, SAMPLE_NOW_ISO } from "./test-support";
 
 // C13 and NFR-PRIV-001: a log-capture harness over every route, with a positive control, finds
 // zero employee names or numbers in log output.
@@ -80,6 +80,7 @@ function loggedApp(capture: Capture, nodeEnv: string | undefined, onRoute: (rout
   return buildApp({
     nodeEnv,
     onRoute,
+    now: fixedNow(SAMPLE_NOW_ISO),
     fastify: { logger: { level: "trace", stream: capture.stream } },
   });
 }

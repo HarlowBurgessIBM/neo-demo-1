@@ -3,7 +3,7 @@ import { readFileSync, statSync } from "node:fs";
 import type { FastifyInstance, InjectOptions, RouteOptions } from "fastify";
 import { describe, expect, test } from "vitest";
 import { buildApp } from "./app";
-import { headersFor, SAMPLE_ROSTER_PATH } from "./test-support";
+import { fixedNow, headersFor, SAMPLE_NOW_ISO, SAMPLE_ROSTER_PATH } from "./test-support";
 
 // C12: the API exposes no route that writes to the roster file, and has no route for storing a
 // decision, consent or approval.
@@ -121,6 +121,7 @@ describe("C12: the roster file is never written", () => {
     const registered = new Set<string>();
     const app: FastifyInstance = buildApp({
       rosterPath: SAMPLE_ROSTER_PATH,
+      now: fixedNow(SAMPLE_NOW_ISO),
       onRoute: (route) => {
         const methods: string[] = Array.isArray(route.method) ? route.method : [route.method];
         for (const method of methods) {

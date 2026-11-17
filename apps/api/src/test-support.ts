@@ -144,6 +144,18 @@ export function readFixture(name: string): unknown {
   return parsed;
 }
 
+/** A clock reading after the sample roster's export (2027-03-07T08:00:00Z) and well within 26 hours of it. */
+export const SAMPLE_NOW_ISO = "2027-03-07T14:00:00Z";
+
+/** A clock fixed at `iso`. Throws on an unparseable value so a bad test fixture fails loudly. */
+export function fixedNow(iso: string): () => number {
+  const epochMs = Date.parse(iso);
+  if (Number.isNaN(epochMs)) {
+    throw new Error("fixedNow: not a valid date-time");
+  }
+  return () => epochMs;
+}
+
 /** The two identity headers the site access gateway sets. */
 export function headersFor(employeeNumber: string, roles = "operator"): Record<string, string> {
   return { "x-employee-number": employeeNumber, "x-roles": roles };

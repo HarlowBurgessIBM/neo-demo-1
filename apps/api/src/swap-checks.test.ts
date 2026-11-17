@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { buildApp } from "./app";
 import type { Roster } from "./test-support";
-import { headersFor, readFixture, readSampleRoster } from "./test-support";
+import { fixedNow, headersFor, readFixture, readSampleRoster, SAMPLE_NOW_ISO } from "./test-support";
 
 interface SwapCheckResponse {
   kind: string;
@@ -23,7 +23,7 @@ const STEP_8 = { giveShiftId: "CDU-CON1-0318-N", takeShiftId: "FCC-CON1-0318-D" 
 let app: FastifyInstance;
 
 beforeAll(async () => {
-  app = buildApp();
+  app = buildApp({ now: fixedNow(SAMPLE_NOW_ISO) });
   await app.ready();
 });
 
@@ -63,7 +63,7 @@ async function withModifiedRoster(
 ): Promise<void> {
   const roster: Roster = structuredClone(readSampleRoster());
   modify(roster);
-  const rosterApp = buildApp({ roster });
+  const rosterApp = buildApp({ roster, now: fixedNow(SAMPLE_NOW_ISO) });
   await rosterApp.ready();
   try {
     await run(rosterApp);
@@ -226,7 +226,7 @@ describe("C5: both shifts outside the pilot", () => {
     }
     give.employeeNumber = MAYA;
 
-    const rosterApp = buildApp({ roster });
+    const rosterApp = buildApp({ roster, now: fixedNow(SAMPLE_NOW_ISO) });
     await rosterApp.ready();
     try {
       const response = await swapCheckAs(MAYA, "FCC-CON1-0311-D", "FCC-CON1-0318-D", rosterApp);

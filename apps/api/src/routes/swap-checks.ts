@@ -1,6 +1,7 @@
+import { assessDeterminability, type CannotDetermineReason } from "@shiftswap/rules";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { callerOf, requireOperator, rosterOf } from "../identity";
-import { refusalShifts, type RosterSource } from "../roster";
+import { exportStamp, refusalShifts, type ExportStamp, type RosterSource } from "../roster";
 
 /** The units in scope for the pilot. Any other unit is refused before evaluation. */
 export const PILOT_UNITS = ["CDU", "HCU"] as const;
@@ -27,6 +28,15 @@ export interface NotEvaluated {
   kind: "not-evaluated";
 }
 
+/**
+ * The roster cannot support an answer to this swap. It is an outcome, not a refusal: the request
+ * was valid. Carries the export stamp and the reasons only, no findings and no employee data.
+ */
+export interface CannotDetermineBody extends ExportStamp {
+  outcome: "cannot-determine";
+  reasons: CannotDetermineReason[];
+}
+
 export interface GiveShiftNotYours {
   kind: "forbidden";
   code: "give-shift-not-yours";
@@ -38,17 +48,24 @@ function isOutsidePilot(unit: unknown): unit is string {
 }
 
 /**
- * Seam for swap evaluation. Later tasks plug the rules engine in here. Until then every swap
- * that passes the checks above is answered 501 `not-evaluated`, never a result or an `outcome`.
- * Later tasks add the give and take shifts to this signature when evaluation needs them.
+ * Seam for swap evaluation. Picks that pass the refusal checks and the determinability gate still
+ * get the interim 501 `not-evaluated`, never a result or an `outcome`. Later tasks (#6 §3.1/§3.3,
+ * #7 §3.2, #8 §4.2) replace it and add the give and take shifts to this signature.
  */
 function evaluateSwap(reply: FastifyReply): FastifyReply {
   const body: NotEvaluated = { kind: "not-evaluated" };
   return reply.code(501).send(body);
 }
 
-/** Registers POST /api/swap-checks. The roster is the one the identity hook read for this request. */
-export function registerSwapChecksRoute(app: FastifyInstance, source: RosterSource): void {
+/**
+ * Registers POST /api/swap-checks. The roster is the one the identity hook read for this request.
+ * `now` is the clock, in epoch milliseconds, read once per request.
+ */
+export function registerSwapChecksRoute(
+  app: FastifyInstance,
+  source: RosterSource,
+  now: () => number,
+): void {
   app.post<{ Body: SwapCheckBody }>(
     "/api/swap-checks",
     {
@@ -74,7 +91,8 @@ export function registerSwapChecksRoute(app: FastifyInstance, source: RosterSour
       }
 
       const { giveShiftId, takeShiftId } = request.body;
-      const shiftsById = refusalShifts(rosterOf(request));
+      const raw = rosterOf(request);
+      const shiftsById = refusalShifts(raw);
 
       // Unknown and not-yours get the same answer so shift ownership cannot be probed.
       const give = shiftsById.get(giveShiftId);
@@ -105,6 +123,17 @@ export function registerSwapChecksRoute(app: FastifyInstance, source: RosterSour
       }
       if (outsidePilot.length > 0) {
         return refuse(outsidePilot);
+      }
+
+      // Reasons are never logged: they can quote roster values.
+      const determinability = assessDeterminability(raw, { now: now(), giveShiftId, takeShiftId });
+      if (!determinability.determinable) {
+        const body: CannotDetermineBody = {
+          outcome: "cannot-determine",
+          ...exportStamp(raw),
+          reasons: determinability.reasons,
+        };
+        return reply.code(200).send(body);
       }
 
       return evaluateSwap(reply);

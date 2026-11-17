@@ -15,6 +15,8 @@ export interface BuildAppOptions {
   nodeEnv?: string | undefined;
   /** Observes every route registered, including health. */
   onRoute?: (route: RouteOptions) => void;
+  /** The clock, in epoch milliseconds. Defaults to `Date.now`. Tests inject a fixed one. */
+  now?: () => number;
 }
 
 export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
@@ -37,7 +39,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
 
   registerShiftsRoute(app, source);
 
-  registerSwapChecksRoute(app, source);
+  registerSwapChecksRoute(app, source, options.now ?? Date.now);
 
   // Development-only user switcher (engineering standard § 8.3). Absent in production, so 404.
   if (options.nodeEnv !== "production") {
