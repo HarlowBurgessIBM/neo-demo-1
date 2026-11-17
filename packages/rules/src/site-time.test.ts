@@ -2,6 +2,7 @@ import fc from "fast-check";
 import { describe, expect, test } from "vitest";
 import {
   addDays,
+  elapsedMinutes,
   isLocalDate,
   isLocalWallTime,
   isValidTimeZone,
@@ -203,6 +204,87 @@ describe("resolveLocalTime examples", () => {
 
   test.each(["Mars/Olympus", "", "+05:00"])("zone %j is an invalid time zone", (zone) => {
     expect(resolveLocalTime("2027-03-07T10:00", zone)).toEqual({ kind: "invalid-time-zone" });
+  });
+});
+
+describe("elapsedMinutes examples (criterion 1: DST elapsed time)", () => {
+  test.each([
+    ["spring forward: 18:00 to 05:00 is 10 h, though the clocks differ by 11 h", "2027-03-13T18:00", "2027-03-14T05:00", 10],
+    ["spring forward: 18:00 to 06:00 is 11 h", "2027-03-13T18:00", "2027-03-14T06:00", 11],
+    ["after the change: 05:00 to 17:00 on the same day is 12 h", "2027-03-14T05:00", "2027-03-14T17:00", 12],
+    ["the day before the change: 18:00 to 06:00 is 12 h", "2027-03-12T18:00", "2027-03-13T06:00", 12],
+  ])("%s", (_label, from, to, hours) => {
+    expect(elapsedMinutes(from, to, CHICAGO)).toBe(hours * 60);
+  });
+
+  test("the minute before 02:00 to 03:00 on the change day is one minute", () => {
+    expect(elapsedMinutes("2027-03-14T01:59", "2027-03-14T03:00", CHICAGO)).toBe(1);
+  });
+
+  test("fall back adds the repeated hour: 18:00 to 06:00 across 7 Nov is 13 h", () => {
+    expect(elapsedMinutes("2027-11-06T18:00", "2027-11-07T06:00", CHICAGO)).toBe(13 * 60);
+  });
+
+  test("the same wall time is zero minutes", () => {
+    expect(elapsedMinutes("2027-03-12T18:00", "2027-03-12T18:00", CHICAGO)).toBe(0);
+  });
+
+  test("is negative when the second time is earlier", () => {
+    expect(elapsedMinutes("2027-03-12T18:00", "2027-03-12T17:30", CHICAGO)).toBe(-30);
+  });
+
+  test.each([
+    ["a nonexistent first time", "2027-03-14T02:30", "2027-03-14T12:00", CHICAGO],
+    ["a nonexistent second time", "2027-03-13T12:00", "2027-03-14T02:30", CHICAGO],
+    ["an ambiguous time", "2027-11-07T00:00", "2027-11-07T01:30", CHICAGO],
+    ["a malformed time", "2027-03-13T12:00", "garbage", CHICAGO],
+    ["an invalid zone", "2027-03-13T12:00", "2027-03-13T13:00", "Mars/Olympus"],
+  ])("is undefined for %s", (_label, from, to, zone) => {
+    expect(elapsedMinutes(from, to, zone)).toBeUndefined();
+  });
+});
+
+describe("elapsedMinutes property (criterion 2: DST)", () => {
+  // The oracle works on the wall fields alone, as if they were UTC (Date.UTC), so it shares
+  // nothing with the implementation, which resolves wall times through Intl.
+  const FIRST_WALL_MS = Date.UTC(2027, 2, 1);
+  const LAST_INDEX = 28 * 24 * 60 - 1; // 2027-03-28T23:59
+  /** Wall time of the clock change: 02:00 does not exist on 14 March, the clocks jump to 03:00. */
+  const GAP_START_WALL_MS = Date.UTC(2027, 2, 14, 2, 0);
+  const GAP_END_WALL_MS = Date.UTC(2027, 2, 14, 3, 0);
+  const GAP_FIRST_INDEX = (GAP_START_WALL_MS - FIRST_WALL_MS) / MINUTE_MS;
+  const GAP_LAST_INDEX = (GAP_END_WALL_MS - FIRST_WALL_MS) / MINUTE_MS - 1;
+
+  const wallOf = (index: number): string =>
+    new Date(FIRST_WALL_MS + index * MINUTE_MS).toISOString().slice(0, 16);
+
+  // Half the draws fall in the three days around the change, where the property bites.
+  const minuteIndex = fc
+    .oneof(
+      fc.integer({ min: 0, max: LAST_INDEX }),
+      fc.integer({ min: 12 * 24 * 60, max: 15 * 24 * 60 }),
+    )
+    .filter((index) => index < GAP_FIRST_INDEX || index > GAP_LAST_INDEX);
+
+  test("elapsed is the clock difference, less 1 h iff a is before the change and b is at or after 03:00", () => {
+    fc.assert(
+      fc.property(fc.tuple(minuteIndex, minuteIndex), ([x, y]) => {
+        const [first, second] = x <= y ? [x, y] : [y, x];
+        const a = wallOf(first);
+        const b = wallOf(second);
+        const aWallMs = FIRST_WALL_MS + first * MINUTE_MS;
+        const bWallMs = FIRST_WALL_MS + second * MINUTE_MS;
+        const clockDifference = (bWallMs - aWallMs) / MINUTE_MS;
+        // a before 2027-03-14T08:00Z is a before 02:00 on 14 March, site-local (CST, UTC-6).
+        const crossesChange = aWallMs < GAP_START_WALL_MS && bWallMs >= GAP_END_WALL_MS;
+
+        const elapsed = elapsedMinutes(a, b, CHICAGO);
+
+        expect(elapsed).toBe(crossesChange ? clockDifference - 60 : clockDifference);
+        expect(elapsed === clockDifference - 60).toBe(crossesChange);
+      }),
+      { numRuns: 1000 },
+    );
   });
 });
 

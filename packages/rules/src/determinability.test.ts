@@ -23,7 +23,7 @@ import {
   setQualifications,
   withCoverage,
 } from "./test-rosters";
-import type { RosterFixture } from "./test-rosters";
+import type { RosterFixture, RosterQualification, RosterShift } from "./test-rosters";
 
 const HOUR_MS = 3_600_000;
 const EXPORTED_AT_MS = Date.parse(SAMPLE_EXPORTED_AT);
@@ -1209,6 +1209,341 @@ describe("reason order", () => {
         },
       ),
     );
+  });
+});
+
+describe("qualification entries and shift unit and role (W8)", () => {
+  const base = buildRoster();
+  const GOOD_ENTRY = { unit: "CDU", role: "CONSOLE", validThrough: "2030-12-31" };
+  const parties = [
+    {
+      party: "give-shift-owner",
+      owner: GIVE_OWNER,
+      swappedShiftId: GIVE_SHIFT_ID,
+      otherShiftId: GIVE_OTHER_SHIFT_ID,
+    },
+    {
+      party: "take-shift-owner",
+      owner: TAKE_OWNER,
+      swappedShiftId: TAKE_SHIFT_ID,
+      otherShiftId: TAKE_OTHER_SHIFT_ID,
+    },
+  ] as const;
+
+  /** `owner`'s qualifications replaced by `entries`, which need not be well formed. */
+  function withEntries(roster: RosterFixture, owner: string, entries: unknown[]): RosterFixture {
+    return {
+      ...roster,
+      operators: roster.operators.map((operator) =>
+        operator.employeeNumber === owner
+          ? { ...operator, qualifications: entries as RosterQualification[] }
+          : operator,
+      ),
+    };
+  }
+
+  /** The shift `shiftId` with `patch` laid over it, which need not be well formed. */
+  function withShiftPatch(
+    roster: RosterFixture,
+    shiftId: string,
+    patch: Record<string, unknown>,
+  ): RosterFixture {
+    return {
+      ...roster,
+      shifts: roster.shifts.map((shift) =>
+        shift.shiftId === shiftId ? ({ ...shift, ...patch } as RosterShift) : shift,
+      ),
+    };
+  }
+
+  describe.each(parties)("case (i): a qualification entry of the $party", ({ party, owner }) => {
+    test.each([
+      ["a string", "CDU", "malformed"],
+      ["a number", 7, "malformed"],
+      ["an array", [], "malformed"],
+      ["null", null, "missing"],
+      ["undefined", undefined, "missing"],
+    ] as const)("that is %s names the entry", (_label, entry, problem) => {
+      const roster = withEntries(base, owner, [GOOD_ENTRY, entry]);
+      expect(check(roster, FRESH_NOW)).toEqual(
+        refused({
+          code: "invalid-export-field",
+          field: "operators.qualifications",
+          party,
+          index: 1,
+          problem,
+        }),
+      );
+    });
+
+    test.each([
+      ["unit", "a number", { unit: 5 }, "malformed"],
+      ["unit", "an object", { unit: {} }, "malformed"],
+      ["unit", "absent", { unit: undefined }, "missing"],
+      ["unit", "null", { unit: null }, "missing"],
+      ["role", "a number", { role: 5 }, "malformed"],
+      ["role", "an array", { role: ["CONSOLE"] }, "malformed"],
+      ["role", "absent", { role: undefined }, "missing"],
+      ["role", "null", { role: null }, "missing"],
+      ["validThrough", "absent", { validThrough: undefined }, "missing"],
+      ["validThrough", "null", { validThrough: null }, "missing"],
+      ["validThrough", "not a date", { validThrough: "soon" }, "malformed"],
+      ["validThrough", "an impossible date", { validThrough: "2030-02-30" }, "malformed"],
+      ["validThrough", "a date with a time", { validThrough: "2030-12-31T00:00" }, "malformed"],
+      ["validThrough", "a number", { validThrough: 20301231 }, "malformed"],
+    ] as const)("with %s %s names that field of the entry", (field, _label, patch, problem) => {
+      const roster = withEntries(base, owner, [GOOD_ENTRY, { ...GOOD_ENTRY, ...patch }]);
+      expect(check(roster, FRESH_NOW)).toEqual(
+        refused({
+          code: "invalid-export-field",
+          field: `operators.qualifications.${field}`,
+          party,
+          index: 1,
+          problem,
+        }),
+      );
+    });
+
+    test("with every field unusable names unit, role and validThrough in that order", () => {
+      const roster = withEntries(base, owner, [{ unit: 1, role: null }]);
+      expect(check(roster, FRESH_NOW)).toEqual(
+        refused(
+          {
+            code: "invalid-export-field",
+            field: "operators.qualifications.unit",
+            party,
+            index: 0,
+            problem: "malformed",
+          },
+          {
+            code: "invalid-export-field",
+            field: "operators.qualifications.role",
+            party,
+            index: 0,
+            problem: "missing",
+          },
+          {
+            code: "invalid-export-field",
+            field: "operators.qualifications.validThrough",
+            party,
+            index: 0,
+            problem: "missing",
+          },
+        ),
+      );
+    });
+
+    test("names every bad entry, in entry order", () => {
+      const roster = withEntries(base, owner, ["x", GOOD_ENTRY, { ...GOOD_ENTRY, role: 2 }]);
+      expect(check(roster, FRESH_NOW)).toEqual(
+        refused(
+          {
+            code: "invalid-export-field",
+            field: "operators.qualifications",
+            party,
+            index: 0,
+            problem: "malformed",
+          },
+          {
+            code: "invalid-export-field",
+            field: "operators.qualifications.role",
+            party,
+            index: 2,
+            problem: "malformed",
+          },
+        ),
+      );
+    });
+
+    test("entries that are well formed give no reason", () => {
+      const roster = withEntries(base, owner, [
+        GOOD_ENTRY,
+        { unit: "HCU", role: "FIELD", validThrough: "2027-01-01" },
+      ]);
+      expect(check(roster, FRESH_NOW)).toEqual({ determinable: true });
+    });
+  });
+
+  test("a bad qualification entry of an operator who is not part of the swap gives no reason", () => {
+    expect(check(withEntries(base, BYSTANDER, ["x", { unit: 1 }]), FRESH_NOW)).toEqual({
+      determinable: true,
+    });
+  });
+
+  describe.each(parties)("case (ii): a shift of the $party", ({ party, swappedShiftId, otherShiftId }) => {
+    test.each([
+      ["unit", "a number", { unit: 5 }, "malformed"],
+      ["unit", "an object", { unit: {} }, "malformed"],
+      ["unit", "absent", { unit: undefined }, "missing"],
+      ["unit", "null", { unit: null }, "missing"],
+      ["role", "a number", { role: 5 }, "malformed"],
+      ["role", "an array", { role: [] }, "malformed"],
+      ["role", "absent", { role: undefined }, "missing"],
+      ["role", "null", { role: null }, "missing"],
+    ] as const)("within coverage with %s %s names the shift", (field, _label, patch, problem) => {
+      for (const shiftId of [swappedShiftId, otherShiftId]) {
+        expect(check(withShiftPatch(base, shiftId, patch), FRESH_NOW)).toEqual(
+          refused({
+            code: "invalid-export-field",
+            field: `shifts.${field}`,
+            party,
+            shiftId,
+            problem,
+          }),
+        );
+      }
+    });
+
+    test("with both unit and role unusable names unit, then role", () => {
+      const roster = withShiftPatch(base, otherShiftId, { unit: 1, role: undefined });
+      expect(check(roster, FRESH_NOW)).toEqual(
+        refused(
+          {
+            code: "invalid-export-field",
+            field: "shifts.unit",
+            party,
+            shiftId: otherShiftId,
+            problem: "malformed",
+          },
+          {
+            code: "invalid-export-field",
+            field: "shifts.role",
+            party,
+            shiftId: otherShiftId,
+            problem: "missing",
+          },
+        ),
+      );
+    });
+
+    test.each([
+      ["before coverage", "2027-02-28T06:00", "2027-02-28T18:00"],
+      ["after coverage", "2027-03-29T06:00", "2027-03-29T18:00"],
+    ])("a bad unit and role on a shift starting %s give no reason", (_label, start, end) => {
+      const roster = withShiftPatch(base, otherShiftId, { start, end, unit: 5, role: null });
+      expect(check(roster, FRESH_NOW)).toEqual({ determinable: true });
+    });
+
+    test("a shift whose start is malformed gives only the time reason, not a unit or role reason", () => {
+      const roster = withShiftPatch(base, otherShiftId, { start: "2027-03-12 06:00", unit: 5, role: null });
+      expect(check(roster, FRESH_NOW)).toEqual(
+        refused({ code: "shift-time-malformed", shiftId: otherShiftId, field: "start" }),
+      );
+    });
+  });
+
+  test("a bad unit or role on a shift of an operator who is not part of the swap gives no reason", () => {
+    const roster = withShiftPatch(base, BYSTANDER_SHIFT_ID, { unit: 5, role: null });
+    expect(check(roster, FRESH_NOW)).toEqual({ determinable: true });
+  });
+
+  test("a bad unit on a shift that starts on the first or last coverage date is named", () => {
+    const first = withShiftPatch(base, GIVE_OTHER_SHIFT_ID, {
+      start: "2027-03-01T06:00",
+      end: "2027-03-01T18:00",
+      unit: 5,
+    });
+    const last = withShiftPatch(base, GIVE_OTHER_SHIFT_ID, {
+      start: "2027-03-28T20:00",
+      end: "2027-03-29T04:00",
+      unit: 5,
+    });
+    for (const roster of [first, last]) {
+      expect(codesOf(check(roster, FRESH_NOW))).toEqual(["invalid-export-field"]);
+    }
+  });
+
+  describe("mixed errors", () => {
+    // Every group of the W8 reasons and the groups around them, written out of order.
+    function mixedRoster(): RosterFixture {
+      let roster = withShiftPatch(base, GIVE_OTHER_SHIFT_ID, { start: "2027-03-14T02:30" });
+      roster = withShiftPatch(roster, TAKE_OTHER_SHIFT_ID, { end: "garbage", role: null });
+      roster = withShiftPatch(roster, GIVE_SHIFT_ID, { unit: 3 });
+      roster = withShiftPatch(roster, TAKE_SHIFT_ID, {
+        start: "2027-03-25T06:00",
+        end: "2027-03-25T18:00",
+      });
+      roster = withEntries(roster, TAKE_OWNER, [
+        { ...GOOD_ENTRY, unit: { employeeNumber: GIVE_OWNER, name: "Alex Example" } },
+        "x",
+      ]);
+      return setQualifications(roster, GIVE_OWNER, undefined);
+    }
+
+    test("qualification entry reasons follow the qualifications-missing reasons; shift unit and role reasons follow shift-time-malformed and precede the horizon reasons", () => {
+      expect(check(mixedRoster(), FRESH_NOW)).toEqual(
+        refused(
+          {
+            code: "qualifications-missing",
+            shiftId: GIVE_SHIFT_ID,
+            party: "give-shift-owner",
+            problem: "absent",
+          },
+          {
+            code: "invalid-export-field",
+            field: "operators.qualifications.unit",
+            party: "take-shift-owner",
+            index: 0,
+            problem: "malformed",
+          },
+          {
+            code: "invalid-export-field",
+            field: "operators.qualifications",
+            party: "take-shift-owner",
+            index: 1,
+            problem: "malformed",
+          },
+          { code: "shift-time-malformed", shiftId: TAKE_OTHER_SHIFT_ID, field: "end" },
+          {
+            code: "invalid-export-field",
+            field: "shifts.unit",
+            party: "give-shift-owner",
+            shiftId: GIVE_SHIFT_ID,
+            problem: "malformed",
+          },
+          {
+            code: "invalid-export-field",
+            field: "shifts.role",
+            party: "take-shift-owner",
+            shiftId: TAKE_OTHER_SHIFT_ID,
+            problem: "missing",
+          },
+          {
+            code: "shift-outside-horizon",
+            shiftId: TAKE_SHIFT_ID,
+            start: "2027-03-25T06:00",
+            horizonFrom: "2027-03-07",
+            horizonTo: "2027-03-22",
+          },
+          {
+            code: "nonexistent-local-time",
+            shiftId: GIVE_OTHER_SHIFT_ID,
+            field: "start",
+            value: "2027-03-14T02:30",
+          },
+        ),
+      );
+    });
+
+    test("no reason carries a name or an employee number", () => {
+      const text = JSON.stringify(reasonsOf(check(mixedRoster(), FRESH_NOW)));
+      for (const identifier of [GIVE_OWNER, TAKE_OWNER, BYSTANDER, "Alex Example", "Blair Sample", "Casey Placeholder"]) {
+        expect(text).not.toContain(identifier);
+      }
+      expect(Object.keys(JSON.parse(text) as Record<string, unknown>[]).length).toBeGreaterThan(0);
+    });
+
+    test("no W8 reason has a field other than its documented shape", () => {
+      const w8 = reasonsOf(check(mixedRoster(), FRESH_NOW)).filter(
+        (reason) => reason.code === "invalid-export-field",
+      );
+      expect(w8.map((reason) => Object.keys(reason).sort())).toEqual([
+        ["code", "field", "index", "party", "problem"],
+        ["code", "field", "index", "party", "problem"],
+        ["code", "field", "party", "problem", "shiftId"],
+        ["code", "field", "party", "problem", "shiftId"],
+      ]);
+    });
   });
 });
 
