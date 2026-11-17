@@ -128,7 +128,7 @@ export interface OffDutyFinding extends OffDutyPeriod {
   rule: "3.1";
   code: "off-duty-under-minimum";
   changedBySwap: boolean;
-  minimumHours: number;
+  minimumHours: 11;
   overlap?: true;
 }
 

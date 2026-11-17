@@ -94,7 +94,7 @@ export function CannotBeApprovedView({ result, onChooseAgain }: CannotBeApproved
       <p>{result.guidance}</p>
       <h3>Failures</h3>
       {failures.length === 0 ? (
-        <p>No failures were listed.</p>
+        <p>The response listed no failures. Treat this swap as not approved.</p>
       ) : (
         <ul>
           {failures.map(({ employee, finding }, index) => {

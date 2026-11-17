@@ -92,23 +92,78 @@ function isCannotDetermineBody(body: unknown): body is CannotDetermineResponse {
   );
 }
 
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+/** The view shows `hours` and `minutes` as sent, so a period without both as finite numbers is rejected. */
+function isOffDutyPeriod(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    isString(value["fromShiftId"]) &&
+    isString(value["toShiftId"]) &&
+    isString(value["from"]) &&
+    isString(value["to"]) &&
+    isFiniteNumber(value["hours"]) &&
+    isFiniteNumber(value["minutes"])
+  );
+}
+
+function isOptionalOffDutyPeriod(value: unknown): boolean {
+  return value === null || isOffDutyPeriod(value);
+}
+
+/**
+ * Checks the fields the view reads from a finding, per rule. A finding with a rule this build does
+ * not know is accepted when it has a string rule and code, so the view's fallback stays reachable.
+ */
+function isFinding(value: unknown): boolean {
+  if (!isRecord(value) || !isString(value["rule"]) || !isString(value["code"])) {
+    return false;
+  }
+  switch (value["rule"]) {
+    case "3.1":
+      return (
+        value["code"] === "off-duty-under-minimum" &&
+        typeof value["changedBySwap"] === "boolean" &&
+        value["minimumHours"] === 11 &&
+        (value["overlap"] === undefined || value["overlap"] === true) &&
+        isOffDutyPeriod(value)
+      );
+    case "3.3":
+      return (
+        (value["code"] === "qualification-expired" || value["code"] === "no-qualification-for-unit-and-role") &&
+        typeof value["changedBySwap"] === "boolean" &&
+        isString(value["shiftId"]) &&
+        isString(value["unit"]) &&
+        isString(value["role"]) &&
+        isString(value["shiftStartDate"]) &&
+        isStringOrNull(value["validThrough"])
+      );
+    default:
+      return true;
+  }
+}
+
 function isEmployeeResult(value: unknown): boolean {
   if (!isRecord(value)) {
     return false;
   }
   const findings = value["findings"];
-  const before = value["offDutyBefore"];
-  const after = value["offDutyAfter"];
   // The view reads these fields directly, so each must have the type it is read as.
   return (
-    typeof value["party"] === "string" &&
+    isString(value["party"]) &&
     isStringOrNull(value["name"]) &&
+    isString(value["gaveShiftId"]) &&
+    isString(value["tookShiftId"]) &&
     Array.isArray(findings) &&
-    findings.every(
-      (finding) => isRecord(finding) && typeof finding["rule"] === "string" && typeof finding["code"] === "string",
-    ) &&
-    (before === null || isRecord(before)) &&
-    (after === null || isRecord(after))
+    findings.every(isFinding) &&
+    isOptionalOffDutyPeriod(value["offDutyBefore"]) &&
+    isOptionalOffDutyPeriod(value["offDutyAfter"])
   );
 }
 
