@@ -1,7 +1,13 @@
-import { assessDeterminability, type CannotDetermineReason } from "@shiftswap/rules";
+import {
+  assessDeterminability,
+  evaluateSwap,
+  type CannotDetermineReason,
+  type EmployeeEvaluation,
+} from "@shiftswap/rules";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { callerOf, requireOperator, rosterOf } from "../identity";
 import { exportStamp, refusalShifts, type ExportStamp, type RosterSource } from "../roster";
+import { cannotBeApprovedBody } from "../swap-result";
 
 /** The units in scope for the pilot. Any other unit is refused before evaluation. */
 export const PILOT_UNITS = ["CDU", "HCU"] as const;
@@ -23,7 +29,10 @@ export interface SwapCheckRefusal {
   reasons: RefusalReason[];
 }
 
-/** Evaluation is not wired in yet. Carries no outcome and no findings. */
+/**
+ * The 501 interim answer: no § 3.1 or § 3.3 failure was found, and § 3.2 (#7) and § 4.2 (#8) are
+ * not yet evaluated. Carries no outcome and no findings.
+ */
 export interface NotEvaluated {
   kind: "not-evaluated";
 }
@@ -47,12 +56,26 @@ function isOutsidePilot(unit: unknown): unit is string {
   return typeof unit === "string" && !PILOT_UNITS.some((pilotUnit) => pilotUnit === unit);
 }
 
+/** True when at least one of the two employees has a § 3.1 or § 3.3 finding. */
+function hasFinding(employees: readonly EmployeeEvaluation[]): boolean {
+  return employees.some((employee) => employee.findings.length > 0);
+}
+
 /**
- * Seam for swap evaluation. Picks that pass the refusal checks and the determinability gate still
- * get the interim 501 `not-evaluated`, never a result or an `outcome`. Later tasks (#6 §3.1/§3.3,
- * #7 §3.2, #8 §4.2) replace it and add the give and take shifts to this signature.
+ * Seam for swap evaluation. Picks that pass the refusal checks and the determinability gate are
+ * evaluated against § 3.1 and § 3.3: a failure is a 200 `cannot-be-approved`. Otherwise the
+ * interim 501 `not-evaluated` stays, meaning no § 3.1/§ 3.3 failure found; § 3.2 (#7) and § 4.2
+ * (#8) are not yet evaluated, and later tasks replace it. Nothing from the evaluation is logged.
  */
-function evaluateSwap(reply: FastifyReply): FastifyReply {
+function evaluateAndReply(
+  reply: FastifyReply,
+  raw: unknown,
+  pick: { giveShiftId: string; takeShiftId: string },
+): FastifyReply {
+  const evaluation = evaluateSwap(raw, pick);
+  if (evaluation.kind === "evaluated" && hasFinding(evaluation.employees)) {
+    return reply.code(200).send(cannotBeApprovedBody(raw, evaluation.employees));
+  }
   const body: NotEvaluated = { kind: "not-evaluated" };
   return reply.code(501).send(body);
 }
@@ -136,7 +159,7 @@ export function registerSwapChecksRoute(
         return reply.code(200).send(body);
       }
 
-      return evaluateSwap(reply);
+      return evaluateAndReply(reply, raw, { giveShiftId, takeShiftId });
     },
   );
 }
