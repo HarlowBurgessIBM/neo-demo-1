@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
-import type { FastifyInstance, RouteOptions } from "fastify";
+import type { FastifyInstance, InjectOptions, RouteOptions } from "fastify";
 import { describe, expect, test } from "vitest";
 import { buildApp } from "./app";
 import { headersFor, SAMPLE_ROSTER_PATH } from "./test-support";
@@ -74,7 +74,7 @@ describe("C12: the registered route set is exactly the known routes", () => {
   );
 });
 
-describe("C12: no write routes", () => {
+describe("C12: healthz is public", () => {
   test("GET /api/healthz needs no identity headers", async () => {
     const app = buildApp();
     await app.ready();
@@ -85,7 +85,9 @@ describe("C12: no write routes", () => {
       await app.close();
     }
   });
+});
 
+describe("C12: no write routes", () => {
   const unregistered: [string, string][] = [
     ...["PUT", "PATCH", "DELETE"].flatMap((method) =>
       ["/api/shifts", "/api/swap-checks", "/api/dev/users", "/api/healthz"].map(
@@ -116,24 +118,53 @@ describe("C12: the roster file is never written", () => {
     const hashBefore = sha256OfFile(SAMPLE_ROSTER_PATH);
     const mtimeBefore = statSync(SAMPLE_ROSTER_PATH).mtimeMs;
 
-    const app: FastifyInstance = buildApp({ rosterPath: SAMPLE_ROSTER_PATH });
+    const registered = new Set<string>();
+    const app: FastifyInstance = buildApp({
+      rosterPath: SAMPLE_ROSTER_PATH,
+      onRoute: (route) => {
+        const methods: string[] = Array.isArray(route.method) ? route.method : [route.method];
+        for (const method of methods) {
+          registered.add(`${method} ${route.url}`);
+        }
+      },
+    });
     await app.ready();
+    const operator = headersFor(MAYA);
+    const calls: { route: string; options: InjectOptions; expected: number }[] = [
+      { route: "GET /api/healthz", options: { method: "GET", url: "/api/healthz" }, expected: 200 },
+      { route: "GET /api/shifts", options: { method: "GET", url: "/api/shifts", headers: operator }, expected: 200 },
+      {
+        route: "POST /api/swap-checks",
+        options: { method: "POST", url: "/api/swap-checks", headers: operator, payload: STEP_1 },
+        expected: 501,
+      },
+      {
+        route: "POST /api/swap-checks",
+        options: { method: "POST", url: "/api/swap-checks", headers: operator, payload: STEP_8 },
+        expected: 422,
+      },
+      {
+        route: "POST /api/swap-checks",
+        options: { method: "POST", url: "/api/swap-checks", headers: operator, payload: { giveShiftId: {} } },
+        expected: 400,
+      },
+      { route: "GET /api/dev/users", options: { method: "GET", url: "/api/dev/users" }, expected: 200 },
+    ];
     try {
-      const operator = headersFor(MAYA);
-      const responses = [
-        await app.inject({ method: "GET", url: "/api/healthz" }),
-        await app.inject({ method: "GET", url: "/api/shifts", headers: operator }),
-        await app.inject({ method: "POST", url: "/api/swap-checks", headers: operator, payload: STEP_1 }),
-        await app.inject({ method: "POST", url: "/api/swap-checks", headers: operator, payload: STEP_8 }),
-        await app.inject({ method: "POST", url: "/api/swap-checks", headers: operator, payload: { giveShiftId: {} } }),
-        await app.inject({ method: "GET", url: "/api/dev/users" }),
-      ];
-      // The routes were really exercised: 200, 200, 501, 422, 400, 200.
-      expect(responses.map((response) => response.statusCode)).toEqual([200, 200, 501, 422, 400, 200]);
+      const statuses: number[] = [];
+      for (const { options } of calls) {
+        statuses.push((await app.inject(options)).statusCode);
+      }
+      // The routes were really exercised.
+      expect(statuses).toEqual(calls.map((call) => call.expected));
     } finally {
       await app.close();
     }
 
+    // Every registered route was called, so the hash covers "after every route has been exercised".
+    const exercised = new Set(calls.map((call) => call.route));
+    expect(registered.size).toBeGreaterThan(0);
+    expect([...registered].filter((key) => !exercised.has(key))).toEqual([]);
     expect(sha256OfFile(SAMPLE_ROSTER_PATH)).toBe(hashBefore);
     expect(statSync(SAMPLE_ROSTER_PATH).mtimeMs).toBe(mtimeBefore);
   });

@@ -34,7 +34,7 @@ function newCapture(): Capture {
 
 /** Something personal that must not appear in a log line. */
 interface PersonalValue {
-  kind: "employee number" | "name";
+  kind: "employee number" | "name" | "surname";
   value: string;
 }
 
@@ -44,22 +44,30 @@ function personalValues(): PersonalValue[] {
   return people.flatMap((person): PersonalValue[] => [
     { kind: "employee number", value: person.employeeNumber },
     { kind: "name", value: person.name },
+    // The surname alone is distinctive, and catches "Last, First" and "first.last" forms.
+    { kind: "surname", value: person.name.split(" ").at(-1) ?? person.name },
   ]);
 }
 
 /**
- * The personal values found in `lines`. An employee number matches only as a whole number, so a
- * timestamp or a response time that happens to contain the digits is not a hit. A name matches
- * ignoring case.
+ * The personal values found in `lines`. An employee number matches as a whole number, so a
+ * timestamp or a response time that happens to contain the digits is not a hit: it must not
+ * follow a digit or a digit-then-dot (a decimal fraction such as 0.104417), nor precede a digit.
+ * A number after any other dot, such as `user.104417`, is a hit. A full name matches ignoring
+ * case; a surname matches ignoring case, as a whole word.
  */
 function findPersonalData(lines: readonly string[], values: readonly PersonalValue[]): string[] {
   const hits: string[] = [];
   for (const line of lines) {
     for (const { kind, value } of values) {
-      const found =
-        kind === "employee number"
-          ? new RegExp(`(?<![\\d.])${value}(?!\\d)`).test(line)
-          : line.toLowerCase().includes(value.toLowerCase());
+      let found: boolean;
+      if (kind === "employee number") {
+        found = new RegExp(`(?<!\\d\\.?)${value}(?!\\d)`).test(line);
+      } else if (kind === "surname") {
+        found = new RegExp(`\\b${value}\\b`, "i").test(line);
+      } else {
+        found = line.toLowerCase().includes(value.toLowerCase());
+      }
       if (found) {
         hits.push(`${kind} ${value} in log line: ${line.trim()}`);
       }
@@ -155,7 +163,9 @@ describe("C13: log privacy across every route (NFR-PRIV-001)", () => {
     const roster = readSampleRoster();
     expect(roster.operators).toHaveLength(8);
     expect(roster.supervisors).toHaveLength(2);
-    expect(values).toHaveLength(20);
+    // Per person: an employee number, a full name and a surname.
+    expect(values).toHaveLength(30);
+    expect(values.filter((entry) => entry.kind === "surname").map((entry) => entry.value)).toContain("Thibodeaux");
   });
 
   test("every registered route has an exercise", () => {
@@ -194,5 +204,26 @@ describe("C13: log privacy across every route (NFR-PRIV-001)", () => {
     expect(findPersonalData([probeLines[1] ?? ""], values).join("\n")).toContain("name Maya Thibodeaux");
     // The probe lines are outside the snapshot the zero-hit scan used.
     expect(findPersonalData(beforeProbe, values)).toEqual([]);
+  });
+
+  test("positive control: the scanner finds a number after a dot, a surname alone and name variants", () => {
+    const probeStart = devCapture.lines.length;
+    devApp.log.info("op.104417");
+    devApp.log.info("probe Thibodeaux");
+    devApp.log.info("probe Thibodeaux, Maya");
+    devApp.log.info("probe maya.thibodeaux");
+    const probeLines = devCapture.lines.slice(probeStart);
+    const scan = (index: number): string => findPersonalData([probeLines[index] ?? ""], values).join("\n");
+
+    expect(probeLines).toHaveLength(4);
+    expect(scan(0)).toContain("employee number 104417");
+    expect(scan(1)).toContain("surname Thibodeaux");
+    expect(scan(2)).toContain("surname Thibodeaux");
+    expect(scan(3)).toContain("surname Thibodeaux");
+  });
+
+  test("the scanner skips a decimal fraction and a longer number, which are not employee numbers", () => {
+    const lines = ["responseTime 0.104417", "id 1104417", "id 1044179"];
+    expect(findPersonalData(lines, values)).toEqual([]);
   });
 });
