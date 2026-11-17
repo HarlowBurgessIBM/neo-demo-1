@@ -24,3 +24,24 @@ npm ci
 ```bash
 npm run build && npm run lint && npm test
 ```
+
+## Running locally
+
+Start the API (port 3000), then the web app (port 5173), and pick an operator in the "Act as"
+switcher. The sample roster is dated March 2027, so set the application clock as `AGENTS.md`
+describes:
+
+```bash
+SHIFTSWAP_NOW=2027-03-07T14:00:00Z npm run dev:api
+```
+
+```bash
+npm run dev:web
+```
+
+- `SHIFTSWAP_ROSTER_PATH` overrides the roster export the API reads. The default is
+  `data/roster.sample.json`. The API only reads the file and never writes to it.
+- The switcher is development-only (engineering standard § 8.3). When `NODE_ENV` is not
+  `production`, the API serves `GET /api/dev/users`, and the web app sends `X-Employee-Number` and
+  `X-Roles` for the chosen user. In production the route is not registered and the web app shows no
+  switcher and sends no identity headers, because the site access gateway sets them.
