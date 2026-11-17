@@ -92,6 +92,9 @@ describe("criterion 17: an unreadable roster is 503 roster-unavailable", () => {
         expect(JSON.parse(response.body)).toEqual(ROSTER_UNAVAILABLE);
         expect(JSON.parse(response.body)).not.toHaveProperty("outcome");
         expect(response.body).not.toContain(target);
+        // The body is JSON, so a Windows path would appear with its backslashes doubled.
+        expect(response.body).not.toContain(JSON.stringify(target).slice(1, -1));
+        expect(response.body).not.toContain(path.dirname(target));
         expect(response.body).not.toContain(path.basename(target));
         expect(response.body).not.toContain("leaky-content-marker");
       }
@@ -149,7 +152,7 @@ describe("health does not depend on the roster", () => {
   });
 
   test("/api/healthz is 200 when the roster path is a directory or invalid JSON", async () => {
-    for (const { target } of unavailableRosters().slice(1)) {
+    for (const { target } of unavailableRosters().filter(({ label }) => label !== "a missing file")) {
       const response = await appWith({ rosterPath: target }).inject({ method: "GET", url: "/api/healthz" });
       expect(response.statusCode).toBe(200);
     }
@@ -205,7 +208,9 @@ describe("the roster is read on every request", () => {
     const file = path.join(tempRoot, "corrupted.json");
     writeRoster(file, readSampleRoster());
     const app = appWith({ rosterPath: file });
-    expect((await postSwapCheck(app)).statusCode).toBe(501);
+    // Only the roster read matters here, not how the swap check itself turns out.
+    const readable = await postSwapCheck(app);
+    expect(readable.statusCode).not.toBe(503);
 
     writeFileSync(file, "{ not json", "utf8");
     const response = await postSwapCheck(app);
@@ -458,6 +463,38 @@ describe("the tolerant roster extractors", () => {
           }),
           runAll,
         ),
+      );
+    });
+
+    test("for any string as exportedAt and site.timeZone", () => {
+      fc.assert(
+        fc.property(fc.string(), fc.string(), (exportedAt, timeZone) => {
+          const raw = { exportedAt, site: { timeZone } };
+          runAll(raw);
+          const stamp = exportStamp(raw);
+          const values = Object.values(stamp);
+          expect(values.every((value) => value === null) || values.every((value) => typeof value === "string")).toBe(true);
+        }),
+      );
+    });
+
+    test("for any array of shift-like and operator-like records", () => {
+      const record = fc.record(
+        {
+          shiftId: fc.string(),
+          unit: fc.string(),
+          role: fc.string(),
+          start: fc.string(),
+          end: fc.string(),
+          employeeNumber: fc.string(),
+          name: fc.string(),
+        },
+        { requiredKeys: [] },
+      );
+      fc.assert(
+        fc.property(fc.array(record), fc.array(record), fc.array(record), (shifts, operators, supervisors) => {
+          runAll({ shifts, operators, supervisors });
+        }),
       );
     });
   });
