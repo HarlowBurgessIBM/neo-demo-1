@@ -1,10 +1,14 @@
-import type { FastifyInstance, InjectOptions, RouteOptions } from "fastify";
+import { randomUUID } from "node:crypto";
+import os from "node:os";
+import path from "node:path";
+import type { FastifyInstance, InjectOptions, LightMyRequestResponse, RouteOptions } from "fastify";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { buildApp } from "./app";
-import { fixedNow, headersFor, readSampleRoster, SAMPLE_NOW_ISO } from "./test-support";
+import { buildApp, type BuildAppOptions } from "./app";
+import { fixedNow, headersFor, readSampleRoster, readSampleRosterRaw, SAMPLE_NOW_ISO } from "./test-support";
 
 // C13 and NFR-PRIV-001: a log-capture harness over every route, with a positive control, finds
-// zero employee names or numbers in log output.
+// zero employee names or numbers in log output. It also covers the swap-check gate outcomes
+// (Step 7, ADD-3 and the malformed-roster fixtures) and the roster-unavailable 503.
 
 const MAYA = "104417";
 const LUIS = "102286";
@@ -13,6 +17,13 @@ const NOT_ON_ROSTER = "999999";
 
 const STEP_1 = { giveShiftId: "CDU-CON1-0318-N", takeShiftId: "CDU-CON1-0319-N" };
 const STEP_8 = { giveShiftId: "CDU-CON1-0318-N", takeShiftId: "FCC-CON1-0318-D" };
+/** Step 7's pick is the same pair as Step 1: only the clock differs. */
+const STEP_7 = STEP_1;
+const STEP_7_NOW_ISO = "2027-03-08T12:00:00Z";
+const ADD_3 = { giveShiftId: "CDU-FLD1-0318-D", takeShiftId: "CDU-CON1-0326-D" };
+const ADD_3_CALLER = "108529";
+const ADD_3_NOW_ISO = "2027-03-07T14:00:00Z";
+const BEFORE_EXPORT_NOW_ISO = "2027-03-07T07:59:59Z";
 
 /** A pino-compatible destination that keeps every line written to it. */
 interface Capture {
@@ -41,12 +52,35 @@ interface PersonalValue {
 function personalValues(): PersonalValue[] {
   const roster = readSampleRoster();
   const people = [...roster.operators, ...roster.supervisors];
-  return people.flatMap((person): PersonalValue[] => [
+  const fromPeople = people.flatMap((person): PersonalValue[] => [
     { kind: "employee number", value: person.employeeNumber },
     { kind: "name", value: person.name },
     // The surname alone is distinctive, and catches "Last, First" and "first.last" forms.
     { kind: "surname", value: person.name.split(" ").at(-1) ?? person.name },
   ]);
+  // Every number a shift holds, including any that is not a listed person.
+  const known = new Set(people.map((person) => person.employeeNumber));
+  const fromShifts = [...new Set(roster.shifts.map((shift) => shift.employeeNumber))]
+    .filter((employeeNumber) => !known.has(employeeNumber))
+    .map((employeeNumber): PersonalValue => ({ kind: "employee number", value: employeeNumber }));
+  return [...fromPeople, ...fromShifts];
+}
+
+/** A fresh, mutable copy of the sample roster as raw JSON, for building a fixture. */
+function sampleRosterCopy(): Record<string, unknown> {
+  return readSampleRosterRaw() as Record<string, unknown>;
+}
+
+function operatorsOf(roster: Record<string, unknown>): Record<string, unknown>[] {
+  return roster["operators"] as Record<string, unknown>[];
+}
+
+/** A roster scenario: the app options that make it, the exercise that runs against it. */
+interface Scenario {
+  name: string;
+  options: Pick<BuildAppOptions, "roster" | "rosterPath">;
+  nowIso: string;
+  run: (app: FastifyInstance) => Promise<void>;
 }
 
 /**
@@ -76,11 +110,18 @@ function findPersonalData(lines: readonly string[], values: readonly PersonalVal
   return hits;
 }
 
-function loggedApp(capture: Capture, nodeEnv: string | undefined, onRoute: (route: RouteOptions) => void): FastifyInstance {
+function loggedApp(
+  capture: Capture,
+  nodeEnv: string | undefined,
+  onRoute: (route: RouteOptions) => void,
+  extra: Pick<BuildAppOptions, "roster" | "rosterPath"> & { nowIso?: string } = {},
+): FastifyInstance {
+  const { nowIso, ...rosterOptions } = extra;
   return buildApp({
     nodeEnv,
     onRoute,
-    now: fixedNow(SAMPLE_NOW_ISO),
+    ...rosterOptions,
+    now: fixedNow(nowIso ?? SAMPLE_NOW_ISO),
     fastify: { logger: { level: "trace", stream: capture.stream } },
   });
 }
@@ -91,11 +132,18 @@ describe("C13: log privacy across every route (NFR-PRIV-001)", () => {
   const values = personalValues();
   const registered = new Set<string>();
   const statuses = new Set<number>();
+  /** Every non-null `ownerName` returned by GET /api/shifts during the run. */
+  const ownerNamesSeen = new Set<string>();
   const devCapture = newCapture();
   const productionCapture = newCapture();
+  const scenarioCapture = newCapture();
+  /** A path no file exists at. Its full path and basename must never reach a log line. */
+  const missingRosterName = `shiftswap-missing-roster-${randomUUID()}.json`;
+  const missingRosterPath = path.join(os.tmpdir(), missingRosterName);
   let devApp: FastifyInstance;
   let productionApp: FastifyInstance;
-  /** Lines captured by both apps before the positive control writes anything. */
+  const scenarioApps: FastifyInstance[] = [];
+  /** Lines captured by every app before the positive control writes anything. */
   let beforeProbe: string[];
 
   function recordRoute(route: RouteOptions): void {
@@ -105,11 +153,154 @@ describe("C13: log privacy across every route (NFR-PRIV-001)", () => {
     }
   }
 
-  async function call(app: FastifyInstance, options: InjectOptions, expected: number): Promise<void> {
+  function recordOwnerNames(response: LightMyRequestResponse): void {
+    const body: unknown = response.json();
+    const take = typeof body === "object" && body !== null ? (body as { take?: unknown }).take : undefined;
+    if (!Array.isArray(take)) {
+      return;
+    }
+    for (const entry of take as { ownerName?: unknown }[]) {
+      if (typeof entry.ownerName === "string") {
+        ownerNamesSeen.add(entry.ownerName);
+      }
+    }
+  }
+
+  async function call(app: FastifyInstance, options: InjectOptions, expected: number): Promise<LightMyRequestResponse> {
     const response = await app.inject(options);
     expect(response.statusCode, `${options.method ?? "GET"} ${String(options.url)}`).toBe(expected);
     statuses.add(response.statusCode);
+    if (options.url === "/api/shifts" && response.statusCode === 200) {
+      recordOwnerNames(response);
+    }
+    return response;
   }
+
+  /** POST /api/swap-checks as `caller`; expects 200 `cannot-determine`. */
+  async function expectCannotDetermine(
+    app: FastifyInstance,
+    pick: { giveShiftId: string; takeShiftId: string },
+    caller: string,
+  ): Promise<void> {
+    const response = await call(
+      app,
+      { method: "POST", url: "/api/swap-checks", headers: headersFor(caller), payload: pick },
+      200,
+    );
+    expect(response.json<{ outcome?: unknown }>().outcome).toBe("cannot-determine");
+  }
+
+  async function expectRosterUnavailable(app: FastifyInstance, options: InjectOptions): Promise<void> {
+    const response = await call(app, options, 503);
+    expect(response.json<{ code?: unknown }>().code).toBe("roster-unavailable");
+  }
+
+  const shiftsGet: InjectOptions = { method: "GET", url: "/api/shifts", headers: headersFor(MAYA) };
+  const swapPost: InjectOptions = {
+    method: "POST",
+    url: "/api/swap-checks",
+    headers: headersFor(MAYA),
+    payload: STEP_1,
+  };
+
+  const scenarios: Scenario[] = [
+    {
+      name: "Step 7: the clock is a day after the export",
+      options: {},
+      nowIso: STEP_7_NOW_ISO,
+      run: (app) => expectCannotDetermine(app, STEP_7, MAYA),
+    },
+    {
+      name: "ADD-3: a give shift on a unit outside the caller's qualifications",
+      options: {},
+      nowIso: ADD_3_NOW_ISO,
+      run: (app) => expectCannotDetermine(app, ADD_3, ADD_3_CALLER),
+    },
+    {
+      name: "missing export field",
+      options: {
+        roster: (() => {
+          const roster = sampleRosterCopy();
+          delete roster["exportedAt"];
+          return roster;
+        })(),
+      },
+      nowIso: SAMPLE_NOW_ISO,
+      run: (app) => expectCannotDetermine(app, STEP_7, MAYA),
+    },
+    {
+      name: "missing record: an operator with no qualifications",
+      options: {
+        roster: (() => {
+          const roster = sampleRosterCopy();
+          const luis = operatorsOf(roster).find((operator) => operator["employeeNumber"] === LUIS);
+          if (luis === undefined) {
+            throw new Error("fixture: operator not found");
+          }
+          delete luis["qualifications"];
+          return roster;
+        })(),
+      },
+      nowIso: SAMPLE_NOW_ISO,
+      run: (app) => expectCannotDetermine(app, STEP_7, MAYA),
+    },
+    {
+      name: "now before the export",
+      options: {},
+      nowIso: BEFORE_EXPORT_NOW_ISO,
+      run: (app) => expectCannotDetermine(app, STEP_7, MAYA),
+    },
+    {
+      name: "invalid time zone",
+      options: {
+        roster: (() => {
+          const roster = sampleRosterCopy();
+          (roster["site"] as Record<string, unknown>)["timeZone"] = "Mars/Olympus";
+          return roster;
+        })(),
+      },
+      nowIso: SAMPLE_NOW_ISO,
+      run: async (app) => {
+        await expectCannotDetermine(app, STEP_7, MAYA);
+        const response = await call(app, shiftsGet, 200);
+        expect(response.json<{ exportedAtSiteLocal?: unknown }>().exportedAtSiteLocal).toBeNull();
+      },
+    },
+    {
+      name: "503: the roster file is unavailable",
+      options: { rosterPath: missingRosterPath },
+      nowIso: SAMPLE_NOW_ISO,
+      run: async (app) => {
+        await expectRosterUnavailable(app, shiftsGet);
+        await expectRosterUnavailable(app, swapPost);
+        await expectRosterUnavailable(app, { method: "GET", url: "/api/dev/users" });
+      },
+    },
+    {
+      name: "503: operators is absent",
+      options: {
+        roster: (() => {
+          const roster = sampleRosterCopy();
+          delete roster["operators"];
+          return roster;
+        })(),
+      },
+      nowIso: SAMPLE_NOW_ISO,
+      run: async (app) => {
+        await expectRosterUnavailable(app, shiftsGet);
+        await expectRosterUnavailable(app, swapPost);
+      },
+    },
+    {
+      name: "503: operators is not an array",
+      options: { roster: { ...sampleRosterCopy(), operators: {} } },
+      nowIso: SAMPLE_NOW_ISO,
+      run: async (app) => {
+        await expectRosterUnavailable(app, shiftsGet);
+        await expectRosterUnavailable(app, swapPost);
+      },
+    },
+  ];
 
   // One exercise per route. A route registered without an entry here fails the coverage test.
   const exercises: Record<string, Exercise> = {
@@ -152,21 +343,73 @@ describe("C13: log privacy across every route (NFR-PRIV-001)", () => {
     await call(productionApp, { method: "GET", url: "/api/dev/users" }, 404);
     await call(productionApp, { method: "GET", url: "/api/healthz" }, 200);
 
-    beforeProbe = [...devCapture.lines, ...productionCapture.lines];
+    // Each scenario has its own app, so its roster and clock differ. All share one log capture and
+    // register their routes into the same collection, so every route is enumerated across all apps.
+    for (const scenario of scenarios) {
+      const app = loggedApp(scenarioCapture, undefined, recordRoute, { ...scenario.options, nowIso: scenario.nowIso });
+      scenarioApps.push(app);
+      await app.ready();
+      await scenario.run(app);
+    }
+
+    beforeProbe = [...devCapture.lines, ...productionCapture.lines, ...scenarioCapture.lines];
   });
 
   afterAll(async () => {
     await devApp.close();
     await productionApp.close();
+    for (const app of scenarioApps) {
+      await app.close();
+    }
   });
 
   test("the roster supplies the people to look for: 8 operators and 2 supervisors", () => {
     const roster = readSampleRoster();
     expect(roster.operators).toHaveLength(8);
     expect(roster.supervisors).toHaveLength(2);
-    // Per person: an employee number, a full name and a surname.
+    // Per person: an employee number, a full name and a surname. Every shift holder is a person.
     expect(values).toHaveLength(30);
     expect(values.filter((entry) => entry.kind === "surname").map((entry) => entry.value)).toContain("Thibodeaux");
+  });
+
+  test("the scanned set holds every sample operator and supervisor name and employee number, and every shift holder", () => {
+    const roster = readSampleRoster();
+    const scannedNames = new Set(values.filter((entry) => entry.kind === "name").map((entry) => entry.value));
+    const scannedNumbers = new Set(
+      values.filter((entry) => entry.kind === "employee number").map((entry) => entry.value),
+    );
+    for (const person of [...roster.operators, ...roster.supervisors]) {
+      expect(scannedNames.has(person.name), `name of ${person.employeeNumber} is not scanned`).toBe(true);
+      expect(scannedNumbers.has(person.employeeNumber), `number ${person.employeeNumber} is not scanned`).toBe(true);
+    }
+    for (const shift of roster.shifts) {
+      expect(scannedNumbers.has(shift.employeeNumber), `holder of ${shift.shiftId} is not scanned`).toBe(true);
+    }
+  });
+
+  test("every ownerName returned in a shifts response during the run is in the scanned set", () => {
+    const scannedNames = new Set(values.filter((entry) => entry.kind === "name").map((entry) => entry.value));
+    expect(ownerNamesSeen.size).toBeGreaterThan(0);
+    for (const ownerName of ownerNamesSeen) {
+      expect(scannedNames.has(ownerName), `ownerName "${ownerName}" is not scanned`).toBe(true);
+    }
+  });
+
+  test("the scenarios built one app each, all feeding the same route collection", () => {
+    expect(scenarioApps).toHaveLength(scenarios.length);
+    expect(scenarioCapture.lines.length).toBeGreaterThan(0);
+    expect(registered.has("POST /api/swap-checks")).toBe(true);
+  });
+
+  test("the unavailable roster path and its basename appear in no captured log line", () => {
+    const lines = [...devCapture.lines, ...productionCapture.lines, ...scenarioCapture.lines];
+    expect(lines.filter((line) => line.includes(missingRosterName))).toEqual([]);
+    expect(lines.filter((line) => line.includes(missingRosterPath))).toEqual([]);
+  });
+
+  test("the scenario apps' lines hold no employee number or name", () => {
+    expect(scenarioCapture.lines.length).toBeGreaterThan(0);
+    expect(findPersonalData(scenarioCapture.lines, values)).toEqual([]);
   });
 
   test("every registered route has an exercise", () => {
@@ -175,15 +418,16 @@ describe("C13: log privacy across every route (NFR-PRIV-001)", () => {
     expect(missing, `routes with no log-privacy exercise: ${missing.join(", ")}`).toEqual([]);
   });
 
-  test("the exercises produced 200, 400, 401, 403, 404, 422 and 501", () => {
-    for (const status of [200, 400, 401, 403, 404, 422, 501]) {
+  test("the exercises produced 200, 400, 401, 403, 404, 422, 501 and 503", () => {
+    for (const status of [200, 400, 401, 403, 404, 422, 501, 503]) {
       expect(statuses.has(status), `status ${status} was not exercised`).toBe(true);
     }
   });
 
-  test("the harness is wired up: both loggers captured lines, including Fastify's request lines", () => {
+  test("the harness is wired up: every logger captured lines, including Fastify's request lines", () => {
     expect(devCapture.lines.length).toBeGreaterThan(0);
     expect(productionCapture.lines.length).toBeGreaterThan(0);
+    expect(scenarioCapture.lines.some((line) => line.includes("incoming request"))).toBe(true);
     expect(devCapture.lines.some((line) => line.includes("incoming request"))).toBe(true);
     expect(devCapture.lines.some((line) => line.includes("request completed"))).toBe(true);
     expect(productionCapture.lines.some((line) => line.includes("incoming request"))).toBe(true);
