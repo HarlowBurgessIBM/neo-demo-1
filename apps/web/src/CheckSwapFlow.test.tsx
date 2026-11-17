@@ -1,0 +1,217 @@
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { App } from "./App";
+import { wcagViolations } from "./axe";
+import { fixtures, installFixtureFetch } from "./test-support/fixtureFetch";
+import type { FixtureFetchOptions } from "./test-support/fixtureFetch";
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
+
+const GIVE_PICK = "CDU-CON1-0318-N";
+const FCC_TAKE = "FCC-CON1-0318-D";
+const SECTION_SIGN = "\u00a7";
+
+function selectElement(name: string): HTMLSelectElement {
+  const element = screen.getByRole("combobox", { name });
+  if (!(element instanceof HTMLSelectElement)) {
+    throw new Error(`${name} is not a select element.`);
+  }
+  return element;
+}
+
+/** The values of a select's options, without the empty placeholder. */
+function optionValues(select: HTMLSelectElement): string[] {
+  return within(select)
+    .getAllByRole("option")
+    .map((option) => option.getAttribute("value") ?? "")
+    .filter((value) => value !== "");
+}
+
+function ids(shifts: { shiftId: string }[]): string[] {
+  return shifts.map((shift) => shift.shiftId);
+}
+
+async function renderWithUsersLoaded(options?: FixtureFetchOptions) {
+  const fetchStub = installFixtureFetch(options);
+  const view = render(<App />);
+  await waitFor(() => {
+    expect(within(selectElement("Act as (development only)")).getAllByRole("option")).toHaveLength(
+      fixtures.devUsers.users.length + 1,
+    );
+  });
+  return { fetchStub, ...view };
+}
+
+/** Chooses a user and waits until that user's picker has loaded. */
+async function chooseUser(employeeNumber: string) {
+  fireEvent.change(selectElement("Act as (development only)"), { target: { value: employeeNumber } });
+  await screen.findByRole("form", { name: "Choose the shifts to swap" });
+}
+
+function pick(give: string, take: string) {
+  fireEvent.change(selectElement("Shift to give"), { target: { value: give } });
+  fireEvent.change(selectElement("Shift to take"), { target: { value: take } });
+}
+
+function checkSwap() {
+  fireEvent.click(screen.getByRole("button", { name: "Check swap" }));
+}
+
+async function renderPickerFor104417() {
+  const rendered = await renderWithUsersLoaded();
+  await chooseUser("104417");
+  return rendered;
+}
+
+async function renderRefusal() {
+  const rendered = await renderPickerFor104417();
+  pick(GIVE_PICK, FCC_TAKE);
+  checkSwap();
+  const refusal = await screen.findByRole("region", { name: "Swap refused" });
+  return { ...rendered, refusal };
+}
+
+const NOTICE_TEXT = ["2027-03-07T08:00Z", "02:00", "rostered shifts only", "CDU and HCU only", "holdovers not assessed"];
+
+describe("picker from the shared fixtures (C10)", () => {
+  test("the give options equal the 104417 fixture's give list, in order", async () => {
+    await renderPickerFor104417();
+    expect(optionValues(selectElement("Shift to give"))).toEqual(ids(fixtures.shifts104417.give));
+  });
+
+  test("switching to 102286 replaces the give options with Luis's, and back again restores 104417's", async () => {
+    await renderPickerFor104417();
+
+    await chooseUser("102286");
+    await waitFor(() => {
+      expect(optionValues(selectElement("Shift to give"))).toEqual(ids(fixtures.shifts102286.give));
+    });
+    const luisGive = optionValues(selectElement("Shift to give"));
+    for (const mayaId of ids(fixtures.shifts104417.give)) {
+      expect(luisGive).not.toContain(mayaId);
+    }
+
+    await chooseUser("104417");
+    await waitFor(() => {
+      expect(optionValues(selectElement("Shift to give"))).toEqual(ids(fixtures.shifts104417.give));
+    });
+    expect(optionValues(selectElement("Shift to take"))).toContain(FCC_TAKE);
+    expect(optionValues(selectElement("Shift to take"))).toEqual(ids(fixtures.shifts104417.take));
+  });
+
+  test("selecting the FCC shift and checking posts the pick with 104417's identity and renders the refusal", async () => {
+    const { fetchStub, refusal } = await renderRefusal();
+
+    const posts = fetchStub.callsTo("/api/swap-checks");
+    expect(posts).toHaveLength(1);
+    const [post] = posts;
+    expect(post?.method).toBe("POST");
+    expect(JSON.parse(post?.body ?? "null")).toEqual({ giveShiftId: GIVE_PICK, takeShiftId: FCC_TAKE });
+    expect(post?.headers.get("X-Employee-Number")).toBe("104417");
+    expect(post?.headers.get("X-Roles")).toBe("operator");
+
+    expect(within(refusal).getByRole("heading", { level: 2, name: "Swap refused" })).toBeTruthy();
+    expect(refusal.textContent).toContain(FCC_TAKE);
+    expect(refusal.textContent).toContain("FCC");
+    // The picker is replaced by the refusal.
+    expect(screen.queryByRole("form", { name: "Choose the shifts to swap" })).toBeNull();
+  });
+});
+
+describe("pilot notices (C11)", () => {
+  test("the picker view contains the roster export instant and every pilot caveat", async () => {
+    const { container } = await renderPickerFor104417();
+    for (const text of NOTICE_TEXT) {
+      expect(container.textContent).toContain(text);
+    }
+  });
+
+  test("the refusal view contains the same notices, names the FCC shift and has no section-sign text", async () => {
+    const { container } = await renderRefusal();
+    for (const text of NOTICE_TEXT) {
+      expect(container.textContent).toContain(text);
+    }
+    expect(container.textContent).toContain(FCC_TAKE);
+    expect(container.textContent).not.toContain(`${SECTION_SIGN} 3`);
+    expect(container.textContent).not.toContain(SECTION_SIGN);
+  });
+});
+
+describe("accessibility (C14)", () => {
+  test("the picker with the switcher shown and a selection made has no axe-core WCAG A/AA violations", async () => {
+    const { container } = await renderPickerFor104417();
+    pick(GIVE_PICK, FCC_TAKE);
+    expect(selectElement("Act as (development only)").value).toBe("104417");
+    expect(selectElement("Shift to give").value).toBe(GIVE_PICK);
+    expect(selectElement("Shift to take").value).toBe(FCC_TAKE);
+    expect(await wcagViolations(container)).toEqual([]);
+  });
+
+  test("the refusal view has no axe-core WCAG A/AA violations", async () => {
+    const { container } = await renderRefusal();
+    expect(await wcagViolations(container)).toEqual([]);
+  });
+});
+
+describe("refusal from the fixture file (C15)", () => {
+  test("the refusal list has one item per reason in step-8.json", async () => {
+    const { refusal } = await renderRefusal();
+    expect(within(refusal).getAllByRole("listitem")).toHaveLength(fixtures.step8.reasons.length);
+  });
+});
+
+describe("not evaluated (501)", () => {
+  const notEvaluated: FixtureFetchOptions = {
+    swapCheck: (_call, requested) =>
+      requested?.giveShiftId === GIVE_PICK && requested.takeShiftId === "CDU-CON1-0319-N"
+        ? { status: 501, body: { kind: "not-evaluated" } }
+        : undefined,
+  };
+
+  async function renderNotEvaluated() {
+    const rendered = await renderWithUsersLoaded(notEvaluated);
+    await chooseUser("104417");
+    pick(GIVE_PICK, "CDU-CON1-0319-N");
+    checkSwap();
+    const section = await screen.findByRole("region", { name: "Not evaluated" });
+    return { ...rendered, section };
+  }
+
+  test("shows the not-evaluated view with the notices and no outcome wording", async () => {
+    const { container, section } = await renderNotEvaluated();
+
+    expect(within(section).getByRole("heading", { level: 2, name: "Not evaluated" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Swap refused" })).toBeNull();
+    expect(screen.getByRole("complementary", { name: "Pilot notices" })).toBeTruthy();
+    for (const text of NOTICE_TEXT) {
+      expect(container.textContent).toContain(text);
+    }
+    expect(container.textContent).not.toMatch(/outcome|result|approved|rejected|eligible|compliant/i);
+  });
+
+  test("the not-evaluated view has no axe-core WCAG A/AA violations", async () => {
+    const { container } = await renderNotEvaluated();
+    expect(await wcagViolations(container)).toEqual([]);
+  });
+});
+
+describe("focus on view changes", () => {
+  test("focus moves to the refusal heading, and Choose again returns focus to the Shift to give select", async () => {
+    const { refusal } = await renderRefusal();
+    const heading = within(refusal).getByRole("heading", { level: 2, name: "Swap refused" });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(heading);
+    });
+
+    fireEvent.click(within(refusal).getByRole("button", { name: "Choose again" }));
+
+    await screen.findByRole("form", { name: "Choose the shifts to swap" });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(selectElement("Shift to give"));
+    });
+  });
+});
