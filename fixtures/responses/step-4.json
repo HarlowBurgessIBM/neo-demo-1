@@ -1,0 +1,69 @@
+{
+  "outcome": "cannot-be-approved",
+  "exportedAt": "2027-03-07T08:00:00Z",
+  "exportedAtUtcMinute": "2027-03-07T08:00Z",
+  "exportedAtSiteLocal": "2027-03-07T02:00",
+  "siteTimeZone": "America/Chicago",
+  "guidance": "This swap does not meet VE-HSSE-STD-014 § 3 and cannot be approved (§ 4.4). Exceptions to § 3 are granted only through the fatigue exception procedure, VE-HSSE-PRC-021, which is separate from the swap process.",
+  "employees": [
+    {
+      "party": "give-shift-owner",
+      "name": "Maya Thibodeaux",
+      "gaveShiftId": "CDU-CON1-0310-D",
+      "tookShiftId": "HCU-CON1-0314-D",
+      "offDutyBefore": {
+        "fromShiftId": "CDU-CON1-0313-D",
+        "toShiftId": "HCU-CON1-0314-D",
+        "from": "2027-03-13T18:00",
+        "to": "2027-03-14T05:00",
+        "hours": 10,
+        "minutes": 0
+      },
+      "offDutyAfter": {
+        "fromShiftId": "HCU-CON1-0314-D",
+        "toShiftId": "CDU-CON1-0316-N",
+        "from": "2027-03-14T17:00",
+        "to": "2027-03-16T18:00",
+        "hours": 49,
+        "minutes": 0
+      },
+      "findings": [
+        {
+          "rule": "3.1",
+          "code": "off-duty-under-minimum",
+          "changedBySwap": true,
+          "minimumHours": 11,
+          "fromShiftId": "CDU-CON1-0313-D",
+          "toShiftId": "HCU-CON1-0314-D",
+          "from": "2027-03-13T18:00",
+          "to": "2027-03-14T05:00",
+          "hours": 10,
+          "minutes": 0
+        }
+      ]
+    },
+    {
+      "party": "take-shift-owner",
+      "name": "Dwayne Hebert",
+      "gaveShiftId": "HCU-CON1-0314-D",
+      "tookShiftId": "CDU-CON1-0310-D",
+      "offDutyBefore": {
+        "fromShiftId": "HCU-CON1-0302-N",
+        "toShiftId": "CDU-CON1-0310-D",
+        "from": "2027-03-03T05:00",
+        "to": "2027-03-10T06:00",
+        "hours": 169,
+        "minutes": 0
+      },
+      "offDutyAfter": {
+        "fromShiftId": "CDU-CON1-0310-D",
+        "toShiftId": "HCU-CON1-0312-N",
+        "from": "2027-03-10T18:00",
+        "to": "2027-03-12T17:00",
+        "hours": 47,
+        "minutes": 0
+      },
+      "findings": []
+    }
+  ]
+}

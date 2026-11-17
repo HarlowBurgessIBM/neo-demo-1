@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import type { RosterShift } from "./roster";
 
 // Helpers shared by API tests. Not a test file.
+// `readSampleRoster` parses the file afresh on each call, so the roster builders below mutate a
+// private deep copy, never the file or another test's roster.
 
 /** Absolute path to the repo root, independent of the working directory. */
 export const repoRoot: string = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -154,6 +156,81 @@ export function fixedNow(iso: string): () => number {
     throw new Error("fixedNow: not a valid date-time");
   }
   return () => epochMs;
+}
+
+/** One swap request: who asks, the shift they give, and the shift they take. */
+export interface SwapPick {
+  caller: string;
+  give: string;
+  take: string;
+}
+
+// The verification steps' picks against the sample roster (clock SAMPLE_NOW_ISO).
+/** Step 1: 104417 gives CDU-CON1-0318-N and takes CDU-CON1-0319-N. No § 3.1 or § 3.3 failure. */
+export const STEP_1: SwapPick = { caller: "104417", give: "CDU-CON1-0318-N", take: "CDU-CON1-0319-N" };
+/** Step 2: 106640 gives HCU-CON2-0312-N and takes HCU-CON1-0310-D. */
+export const STEP_2: SwapPick = { caller: "106640", give: "HCU-CON2-0312-N", take: "HCU-CON1-0310-D" };
+/** Step 3: 104417 gives CDU-CON1-0310-D and takes CDU-CON1-0312-D. */
+export const STEP_3: SwapPick = { caller: "104417", give: "CDU-CON1-0310-D", take: "CDU-CON1-0312-D" };
+/** Step 4 (clock change on 2027-03-14): 104417 gives CDU-CON1-0310-D and takes HCU-CON1-0314-D. */
+export const STEP_4: SwapPick = { caller: "104417", give: "CDU-CON1-0310-D", take: "HCU-CON1-0314-D" };
+/** Step 6: 107903 gives HCU-CON1-0308-D and takes HCU-CON1-0317-D. */
+export const STEP_6: SwapPick = { caller: "107903", give: "HCU-CON1-0308-D", take: "HCU-CON1-0317-D" };
+
+/** The sample roster with `added` appended to its shifts. Nothing in the sample is changed. */
+function sampleRosterWith(...added: RosterShift[]): Roster {
+  const roster = readSampleRoster();
+  roster.shifts.push(...added);
+  return roster;
+}
+
+/**
+ * For the Step 6 pick: adds a Dwayne (101152) shift ending 2027-03-07T20:00, nine hours before
+ * HCU-CON1-0308-D. Dwayne gets a § 3.1 finding, and Priya (107903) a § 3.3 finding.
+ */
+export function failListingRoster(): Roster {
+  return sampleRosterWith({
+    shiftId: "HCU-CON1-0307-D",
+    unit: "HCU",
+    role: "CONSOLE",
+    start: "2027-03-07T08:00",
+    end: "2027-03-07T20:00",
+    employeeNumber: "101152",
+  });
+}
+
+/**
+ * For the Step 1 pick: adds a Luis (102286) shift ending 2027-03-25T20:00, ten hours before his
+ * CDU-CON1-0326-D. The § 3.1 finding is not changed by the swap.
+ */
+export function unchangedRestRoster(): Roster {
+  return sampleRosterWith({
+    shiftId: "CDU-CON1-0325-D",
+    unit: "CDU",
+    role: "CONSOLE",
+    start: "2027-03-25T08:00",
+    end: "2027-03-25T20:00",
+    employeeNumber: "102286",
+  });
+}
+
+/**
+ * For the Step 2 pick: adds a Priya (107903) HCU/CONSOLE shift her qualification (valid through
+ * 2027-03-15) does not cover. It is on 2027-03-23, inside coverage, unless `outsideCoverage` puts
+ * it on 2027-03-29, after the last covered date. The shift is not part of the swap.
+ */
+export function unchangedShiftQualificationRoster(
+  options: { outsideCoverage?: boolean } = {},
+): Roster {
+  const day = options.outsideCoverage === true ? "29" : "23";
+  return sampleRosterWith({
+    shiftId: `HCU-CON1-03${day}-D`,
+    unit: "HCU",
+    role: "CONSOLE",
+    start: `2027-03-${day}T05:00`,
+    end: `2027-03-${day}T17:00`,
+    employeeNumber: "107903",
+  });
 }
 
 /** The two identity headers the site access gateway sets. */

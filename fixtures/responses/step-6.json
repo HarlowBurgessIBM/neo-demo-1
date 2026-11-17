@@ -1,0 +1,67 @@
+{
+  "outcome": "cannot-be-approved",
+  "exportedAt": "2027-03-07T08:00:00Z",
+  "exportedAtUtcMinute": "2027-03-07T08:00Z",
+  "exportedAtSiteLocal": "2027-03-07T02:00",
+  "siteTimeZone": "America/Chicago",
+  "guidance": "This swap does not meet VE-HSSE-STD-014 § 3 and cannot be approved (§ 4.4). Exceptions to § 3 are granted only through the fatigue exception procedure, VE-HSSE-PRC-021, which is separate from the swap process.",
+  "employees": [
+    {
+      "party": "give-shift-owner",
+      "name": "Priya Raman",
+      "gaveShiftId": "HCU-CON1-0308-D",
+      "tookShiftId": "HCU-CON1-0317-D",
+      "offDutyBefore": {
+        "fromShiftId": "HCU-FLD1-0316-D",
+        "toShiftId": "HCU-CON1-0317-D",
+        "from": "2027-03-16T17:00",
+        "to": "2027-03-17T05:00",
+        "hours": 12,
+        "minutes": 0
+      },
+      "offDutyAfter": {
+        "fromShiftId": "HCU-CON1-0317-D",
+        "toShiftId": "HCU-FLD1-0318-D",
+        "from": "2027-03-17T17:00",
+        "to": "2027-03-18T05:00",
+        "hours": 12,
+        "minutes": 0
+      },
+      "findings": [
+        {
+          "rule": "3.3",
+          "code": "qualification-expired",
+          "changedBySwap": true,
+          "shiftId": "HCU-CON1-0317-D",
+          "unit": "HCU",
+          "role": "CONSOLE",
+          "shiftStartDate": "2027-03-17",
+          "validThrough": "2027-03-15"
+        }
+      ]
+    },
+    {
+      "party": "take-shift-owner",
+      "name": "Dwayne Hebert",
+      "gaveShiftId": "HCU-CON1-0317-D",
+      "tookShiftId": "HCU-CON1-0308-D",
+      "offDutyBefore": {
+        "fromShiftId": "HCU-CON1-0302-N",
+        "toShiftId": "HCU-CON1-0308-D",
+        "from": "2027-03-03T05:00",
+        "to": "2027-03-08T05:00",
+        "hours": 120,
+        "minutes": 0
+      },
+      "offDutyAfter": {
+        "fromShiftId": "HCU-CON1-0308-D",
+        "toShiftId": "HCU-CON1-0312-N",
+        "from": "2027-03-08T17:00",
+        "to": "2027-03-12T17:00",
+        "hours": 96,
+        "minutes": 0
+      },
+      "findings": []
+    }
+  ]
+}
