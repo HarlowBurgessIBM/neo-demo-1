@@ -27,21 +27,29 @@ npm run build && npm run lint && npm test
 
 ## Running locally
 
-Start the API (port 3000), then the web app (port 5173), and pick an operator in the "Act as"
+Start the API (port 3000), then the web app (port 5173), and pick a user in the "Act as"
 switcher. The sample roster is dated March 2027, so set the application clock as `AGENTS.md`
-describes:
+describes (no code reads `SHIFTSWAP_NOW` yet; the swap check will):
 
 ```bash
 SHIFTSWAP_NOW=2027-03-07T14:00:00Z npm run dev:api
 ```
+
+In PowerShell, use `$env:SHIFTSWAP_NOW="2027-03-07T14:00:00Z"; npm run dev:api`. The `VAR=value`
+form above is bash syntax.
 
 ```bash
 npm run dev:web
 ```
 
 - `SHIFTSWAP_ROSTER_PATH` overrides the roster export the API reads. The default is
-  `data/roster.sample.json`. The API only reads the file and never writes to it.
-- The switcher is development-only (engineering standard § 8.3). When `NODE_ENV` is not
-  `production`, the API serves `GET /api/dev/users`, and the web app sends `X-Employee-Number` and
-  `X-Roles` for the chosen user. In production the route is not registered and the web app shows no
-  switcher and sends no identity headers, because the site access gateway sets them.
+  `data/roster.sample.json`. Use an absolute path: the API passes the value to the file system
+  unchanged, and `npm run dev:api` runs in the `apps/api` workspace, so a relative path resolves
+  from `apps/api`, not the repo root. The API only reads the file and never writes to it.
+- The switcher is development-only (engineering standard § 8.3). The API route follows `NODE_ENV`:
+  when it is not `production`, the API serves `GET /api/dev/users`. The web switcher and identity
+  headers follow the Vite build mode: outside a production build (`vite build`), including
+  `npm run dev:web`, the web app shows the switcher and sends `X-Employee-Number` and `X-Roles` for
+  the chosen user. `NODE_ENV` does not affect the web app. In production the route is not
+  registered and the web app shows no switcher and sends no identity headers, because the site
+  access gateway sets them.
