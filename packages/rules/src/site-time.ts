@@ -16,6 +16,7 @@ const LOCAL_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const LOCAL_WALL_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/;
 
 const MS_PER_DAY = 86_400_000;
+const MS_PER_MINUTE = 60_000;
 /** Largest magnitude of an epoch that `Date` can represent. */
 const MAX_EPOCH_MS = 8.64e15;
 
@@ -224,6 +225,24 @@ export function siteLocalDate(epochMs: number, timeZone: string): string | undef
     return undefined;
   }
   return `${pad(parts.year, 4)}-${pad(parts.month, 2)}-${pad(parts.day, 2)}`;
+}
+
+/**
+ * Real elapsed minutes from one site-local wall-clock time to another, so a clock change
+ * between them is accounted for. Negative when `toWall` is before `fromWall`. `undefined`
+ * unless both times resolve to exactly one instant in `timeZone`.
+ */
+export function elapsedMinutes(
+  fromWall: string,
+  toWall: string,
+  timeZone: string,
+): number | undefined {
+  const from = resolveLocalTime(fromWall, timeZone);
+  const to = resolveLocalTime(toWall, timeZone);
+  if (from.kind !== "ok" || to.kind !== "ok") {
+    return undefined;
+  }
+  return (to.epochMs - from.epochMs) / MS_PER_MINUTE;
 }
 
 /**

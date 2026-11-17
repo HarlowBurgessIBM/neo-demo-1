@@ -4,6 +4,13 @@
 // Never throws on bad input; every problem is returned as a reason.
 
 import {
+  buildShiftSet,
+  findSwappedShifts,
+  firstOperatorWithNumber,
+  isPlainObject,
+  type PlainObject,
+} from "./roster-records";
+import {
   addDays,
   isLocalDate,
   isLocalWallTime,
@@ -26,6 +33,16 @@ export type ExportField =
   | "shifts"
   | "operators";
 
+/** A qualification field that can be unusable: the entry itself, or one of its fields. */
+export type QualificationField =
+  | "operators.qualifications"
+  | "operators.qualifications.unit"
+  | "operators.qualifications.role"
+  | "operators.qualifications.validThrough";
+
+/** A swapped-owner shift field that can be unusable. */
+export type ShiftField = "shifts.unit" | "shifts.role";
+
 /** One reason a swap check cannot be determined. Carries no employee number or name. */
 export type CannotDetermineReason =
   | { code: "invalid-now" }
@@ -33,6 +50,30 @@ export type CannotDetermineReason =
       code: "invalid-export-field";
       field: ExportField;
       problem: "missing" | "malformed" | "unknown-time-zone" | "from-after-to";
+    }
+  | {
+      code: "invalid-export-field";
+      field: "operators.qualifications";
+      party: Party;
+      index: number;
+      problem: "missing" | "malformed";
+    }
+  | {
+      code: "invalid-export-field";
+      field:
+        | "operators.qualifications.unit"
+        | "operators.qualifications.role"
+        | "operators.qualifications.validThrough";
+      party: Party;
+      index: number;
+      problem: "missing" | "malformed";
+    }
+  | {
+      code: "invalid-export-field";
+      field: "shifts.unit" | "shifts.role";
+      party: Party;
+      shiftId: string;
+      problem: "missing" | "malformed";
     }
   | {
       code: "coverage-mismatch";
@@ -80,14 +121,9 @@ const COVERAGE_DAYS_BEFORE = -6;
 /** ...and this many days after it. */
 const COVERAGE_DAYS_AFTER = 21;
 
-type PlainObject = Record<string, unknown>;
 type TimeField = "start" | "end";
 
 const TIME_FIELDS: readonly TimeField[] = ["start", "end"];
-
-function isPlainObject(value: unknown): value is PlainObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function problemOf(value: unknown): "missing" | "malformed" {
   return value === undefined || value === null ? "missing" : "malformed";
@@ -95,22 +131,6 @@ function problemOf(value: unknown): "missing" | "malformed" {
 
 function isValidNow(now: number): boolean {
   return typeof now === "number" && Number.isFinite(now) && Math.abs(now) <= MAX_EPOCH_MS;
-}
-
-function firstShiftWithId(shifts: readonly unknown[], id: string): PlainObject | undefined {
-  return shifts.find(
-    (shift): shift is PlainObject => isPlainObject(shift) && shift["shiftId"] === id,
-  );
-}
-
-function firstOperatorWithNumber(
-  operators: readonly unknown[],
-  employeeNumber: string,
-): PlainObject | undefined {
-  return operators.find(
-    (operator): operator is PlainObject =>
-      isPlainObject(operator) && operator["employeeNumber"] === employeeNumber,
-  );
 }
 
 interface SwappedShift {
@@ -139,7 +159,9 @@ export function assessDeterminability(
   const missingShiftReasons: CannotDetermineReason[] = [];
   const ownerReasons: CannotDetermineReason[] = [];
   const qualificationReasons: CannotDetermineReason[] = [];
+  const qualificationEntryReasons: CannotDetermineReason[] = [];
   const malformedReasons: CannotDetermineReason[] = [];
+  const shiftFieldReasons: CannotDetermineReason[] = [];
   const horizonReasons: CannotDetermineReason[] = [];
   const localTimeReasons: CannotDetermineReason[] = [];
 
@@ -332,17 +354,10 @@ export function assessDeterminability(
   }
 
   // The swapped shifts, give then take, and the shift set S.
+  const [giveShift, takeShift] = findSwappedShifts(shifts, giveShiftId, takeShiftId);
   const swapped: SwappedShift[] = [
-    {
-      party: "give-shift-owner",
-      id: giveShiftId,
-      shift: shifts === undefined ? undefined : firstShiftWithId(shifts, giveShiftId),
-    },
-    {
-      party: "take-shift-owner",
-      id: takeShiftId,
-      shift: shifts === undefined ? undefined : firstShiftWithId(shifts, takeShiftId),
-    },
+    { party: "give-shift-owner", id: giveShiftId, shift: giveShift },
+    { party: "take-shift-owner", id: takeShiftId, shift: takeShift },
   ];
 
   if (shifts !== undefined) {
@@ -382,44 +397,84 @@ export function assessDeterminability(
           party,
           problem: "empty",
         });
+      } else {
+        qualifications.forEach((entry: unknown, index) => {
+          if (!isPlainObject(entry)) {
+            qualificationEntryReasons.push({
+              code: "invalid-export-field",
+              field: "operators.qualifications",
+              party,
+              index,
+              problem: problemOf(entry),
+            });
+            return;
+          }
+          for (const field of ["unit", "role"] as const) {
+            const value = entry[field];
+            if (typeof value !== "string") {
+              qualificationEntryReasons.push({
+                code: "invalid-export-field",
+                field: `operators.qualifications.${field}`,
+                party,
+                index,
+                problem: problemOf(value),
+              });
+            }
+          }
+          const validThrough = entry["validThrough"];
+          if (!isLocalDate(validThrough)) {
+            qualificationEntryReasons.push({
+              code: "invalid-export-field",
+              field: "operators.qualifications.validThrough",
+              party,
+              index,
+              problem: problemOf(validThrough),
+            });
+          }
+        });
       }
     }
   }
 
-  const ownerNumbers = new Set<string>();
-  for (const { shift } of swapped) {
-    const employeeNumber = shift?.["employeeNumber"];
-    if (typeof employeeNumber === "string") {
-      ownerNumbers.add(employeeNumber);
-    }
-  }
-  const swappedObjects = new Set<PlainObject>();
-  for (const { shift } of swapped) {
-    if (shift !== undefined) {
-      swappedObjects.add(shift);
-    }
-  }
-
-  const shiftSet: { shiftId: string; shift: PlainObject }[] = [];
-  for (const candidate of shifts ?? []) {
-    if (!isPlainObject(candidate)) {
-      continue;
-    }
-    const employeeNumber = candidate["employeeNumber"];
-    const inSet =
-      swappedObjects.has(candidate) ||
-      (typeof employeeNumber === "string" && ownerNumbers.has(employeeNumber));
-    const shiftId = candidate["shiftId"];
-    if (inSet && typeof shiftId === "string") {
-      shiftSet.push({ shiftId, shift: candidate });
-    }
-  }
+  const shiftSet = buildShiftSet(shifts, [giveShift, takeShift]);
 
   // malformed times
   for (const { shiftId, shift } of shiftSet) {
     for (const field of TIME_FIELDS) {
       if (!isLocalWallTime(shift[field])) {
         malformedReasons.push({ code: "shift-time-malformed", shiftId, field });
+      }
+    }
+  }
+
+  // unit and role of the shifts that start within coverage
+  for (const { shiftId, shift } of shiftSet) {
+    const start = shift["start"];
+    if (!isLocalWallTime(start)) {
+      continue;
+    }
+    if (usableCoverage !== undefined) {
+      const date = start.slice(0, 10);
+      if (date < usableCoverage.from || date > usableCoverage.to) {
+        continue;
+      }
+    }
+    const ownerNumber = shift["employeeNumber"];
+    let party: Party = shift === giveShift ? "give-shift-owner" : "take-shift-owner";
+    if (typeof ownerNumber === "string") {
+      party =
+        ownerNumber === giveShift?.["employeeNumber"] ? "give-shift-owner" : "take-shift-owner";
+    }
+    for (const field of ["unit", "role"] as const) {
+      const value = shift[field];
+      if (typeof value !== "string") {
+        shiftFieldReasons.push({
+          code: "invalid-export-field",
+          field: `shifts.${field}`,
+          party,
+          shiftId,
+          problem: problemOf(value),
+        });
       }
     }
   }
@@ -484,7 +539,9 @@ export function assessDeterminability(
     ...missingShiftReasons,
     ...ownerReasons,
     ...qualificationReasons,
+    ...qualificationEntryReasons,
     ...malformedReasons,
+    ...shiftFieldReasons,
     ...horizonReasons,
     ...localTimeReasons,
   ];
