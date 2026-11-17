@@ -93,13 +93,28 @@ result that would show it failed.
 - **Local** is the only non-production environment: the API and web app running on one machine
   against `data/roster.sample.json`. Feature verification steps are run here.
 - The sample roster is dated March 2027, so local runs set the application clock with the
-  `SHIFTSWAP_NOW` environment variable, an ISO 8601 UTC instant. Use `2027-03-07T14:00:00Z` with
-  the sample. When the variable is unset the system clock is used. Tests pass the time explicitly.
-  No code reads `SHIFTSWAP_NOW` yet; the swap check will.
+  `SHIFTSWAP_NOW` environment variable, an ISO 8601 UTC instant ending in `Z`. The API reads it
+  once at startup, and the swap check uses it. Use `2027-03-07T14:00:00Z` with the sample. A
+  malformed value (anything but an ISO 8601 UTC instant ending in `Z`, such as
+  `2027-03-07T14:00:00Z`) stops the API at startup with a non-zero exit and a message naming
+  `SHIFTSWAP_NOW`. When the variable is unset the system clock is used. Tests pass the time
+  explicitly.
+- With the sample roster, setting the clock is required. If it is unset, today's date is before
+  the March 2027 export, so the swap check returns "cannot determine" with `now-before-export`.
+  Feature verification Step 7 (the stale-export check) uses `2027-03-08T12:00:00Z`, which gives
+  "cannot determine" with `export-stale`.
 - `SHIFTSWAP_ROSTER_PATH` overrides the roster export the API reads. The default is the repo-root
   `data/roster.sample.json`. Use an absolute path: the value is passed to the file system
   unchanged, and `npm run dev:api` runs in the `apps/api` workspace, so a relative path resolves
-  from `apps/api`, not the repo root. The API reads the file once at startup and never writes to it.
+  from `apps/api`, not the repo root. The API reads the file on every request, not once at
+  startup, and never writes to it. A missing, unreadable or non-JSON file gives HTTP 503
+  `{"code":"roster-unavailable"}`, with no file path in the body, on the routes that need the
+  roster (`GET /api/shifts`, `POST /api/swap-checks`, `GET /api/dev/users`). On the
+  identity-bearing routes (`GET /api/shifts`, `POST /api/swap-checks`) so does a parseable file
+  whose `operators` is absent or not an array. A missing or bad file does not fail startup. A
+  parseable file with missing or invalid fields (export time, coverage, time zone, records) gives
+  a "cannot determine" result, not a 503. `GET /api/healthz` does not read the roster and needs no
+  identity.
 - **Development-only user switcher** (`docs/standards/engineering-standard.md` § 8.3). When
   `NODE_ENV` is not `production`, the API serves `GET /api/dev/users`, and the web app (outside a
   production build) shows an "Act as" switcher that sends `X-Employee-Number` and `X-Roles` for the
@@ -107,8 +122,8 @@ result that would show it failed.
   attaches no identity headers, and the site access gateway sets them instead.
 - To verify locally, run `SHIFTSWAP_NOW=2027-03-07T14:00:00Z npm run dev:api` (bash syntax; in
   PowerShell, `$env:SHIFTSWAP_NOW="2027-03-07T14:00:00Z"; npm run dev:api`), then
-  `npm run dev:web`, then pick a user in the switcher. Setting the clock is optional for now, since
-  nothing reads it yet.
+  `npm run dev:web`, then pick a user in the switcher. Do not skip the clock with the sample
+  roster: without it the swap check returns "cannot determine".
 - There is **no staging environment** (`docs/standards/engineering-standard.md` § 9). Anything
   that needs one cannot be run.
 - Nothing is deployed to production.
