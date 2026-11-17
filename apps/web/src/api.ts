@@ -59,7 +59,7 @@ function isNotEvaluatedBody(body: unknown): body is NotEvaluatedResponse {
 
 /**
  * Identity headers for development. The site access gateway sets them in real deployments
- * (engineering standard § 8), so in production they are never attached, even when an identity
+ * (engineering standard section 8), so in production they are never attached, even when an identity
  * is passed. `import.meta.env.PROD` is read on each call so tests can stub it.
  */
 function identityHeaders(identity: Identity | undefined): Record<string, string> {
