@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance, type FastifyServerOptions, type RouteOptions } from "fastify";
 import { defaultRosterPath } from "./config";
 import { loadRoster, type Roster } from "./roster";
+import { registerDevUsersRoute } from "./routes/dev-users";
 import { registerShiftsRoute } from "./routes/shifts";
 import { registerSwapChecksRoute } from "./routes/swap-checks";
 
@@ -33,7 +34,10 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
 
   registerSwapChecksRoute(app, roster);
 
-  // A later unit registers GET /api/dev/users here, only when `options.nodeEnv !== "production"`.
+  // Development-only user switcher (engineering standard § 8.3). Absent in production, so 404.
+  if (options.nodeEnv !== "production") {
+    registerDevUsersRoute(app, roster);
+  }
 
   return app;
 }
