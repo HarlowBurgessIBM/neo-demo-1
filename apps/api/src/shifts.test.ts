@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { buildApp } from "./app";
+import type { Roster } from "./roster";
 import { headersFor, readFixture, readSampleRoster } from "./test-support";
 
 interface ShiftBody {
@@ -193,7 +194,7 @@ describe("C17: take entries name their owner and carry no employee number", () =
     return body.take as TakeBody[];
   }
 
-  test("every take entry has a non-empty string ownerName", async () => {
+  test("in the sample roster, every take entry has a non-empty string ownerName", async () => {
     const take = await takeFor104417();
     expect(take.length).toBeGreaterThan(0);
     for (const entry of take) {
@@ -242,6 +243,63 @@ describe("C17: take entries name their owner and carry no employee number", () =
 
     const asNumber = [{ ...first, extra: Number(rosterNumbers[1]) }];
     expect(leafValues(asNumber).filter((value) => rosterNumbers.includes(value))).toEqual([rosterNumbers[1]]);
+  });
+});
+
+describe("C17: a take entry whose holder is not a roster operator", () => {
+  const ORPHAN_NUMBER = "999999";
+  const ORPHAN_SHIFT_ID = "FCC-CON1-0318-D";
+
+  function orphanRoster(): Roster {
+    const roster: Roster = structuredClone(readSampleRoster());
+    const shift = roster.shifts.find((candidate) => candidate.shiftId === ORPHAN_SHIFT_ID);
+    if (shift === undefined) {
+      throw new Error(`sample roster has no shift ${ORPHAN_SHIFT_ID}`);
+    }
+    expect(shift.employeeNumber).not.toBe("104417");
+    shift.employeeNumber = ORPHAN_NUMBER;
+    return roster;
+  }
+
+  test("the orphan number is on neither the operator list nor the supervisor list", () => {
+    const roster = orphanRoster();
+    const known = [...roster.operators, ...roster.supervisors].map((person) => person.employeeNumber);
+    expect(known).not.toContain(ORPHAN_NUMBER);
+  });
+
+  test("buildApp starts, and the entry has ownerName null, no employeeNumber, and no leaked number", async () => {
+    const roster = orphanRoster();
+    let orphanApp: FastifyInstance | undefined;
+    expect(() => {
+      orphanApp = buildApp({ roster });
+    }).not.toThrow();
+    if (orphanApp === undefined) {
+      throw new Error("buildApp did not return an app");
+    }
+    try {
+      await orphanApp.ready();
+      const response = await orphanApp.inject({ method: "GET", url: "/api/shifts", headers: headersFor("104417") });
+      expect(response.statusCode).toBe(200);
+
+      const take = response.json<ShiftsBody>().take as TakeBody[];
+      const entry = take.find((candidate) => candidate.shiftId === ORPHAN_SHIFT_ID);
+      expect(entry).toBeDefined();
+      expect(entry !== undefined && "ownerName" in entry).toBe(true);
+      expect(entry?.ownerName).toBeNull();
+      expect(entry).not.toHaveProperty("employeeNumber");
+
+      expect(leafValues(take)).not.toContain(ORPHAN_NUMBER);
+
+      expect(take.length).toBeGreaterThan(1);
+      for (const other of take.filter((candidate) => candidate.shiftId !== ORPHAN_SHIFT_ID)) {
+        const rosterShift = roster.shifts.find((shift) => shift.shiftId === other.shiftId);
+        const operator = roster.operators.find((candidate) => candidate.employeeNumber === rosterShift?.employeeNumber);
+        expect(operator, other.shiftId).toBeDefined();
+        expect(other.ownerName, other.shiftId).toBe(operator?.name);
+      }
+    } finally {
+      await orphanApp.close();
+    }
   });
 });
 
