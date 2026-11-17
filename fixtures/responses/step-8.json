@@ -1,0 +1,10 @@
+{
+  "kind": "refused",
+  "reasons": [
+    {
+      "code": "outside-pilot-units",
+      "shiftId": "FCC-CON1-0318-D",
+      "unit": "FCC"
+    }
+  ]
+}
