@@ -1,6 +1,12 @@
 import { buildApp } from "./app";
+import { loadConfig } from "./config";
 
-const app = buildApp({ logger: true });
+const config = loadConfig(process.env);
+const app = buildApp({
+  fastify: { logger: true },
+  rosterPath: config.rosterPath,
+  nodeEnv: config.nodeEnv,
+});
 const port = Number(process.env.PORT ?? 3000);
 
 try {
