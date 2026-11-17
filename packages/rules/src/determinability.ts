@@ -193,10 +193,32 @@ export function assessDeterminability(
   }
 
   // D: the site-local export date
-  const exportDate =
+  const siteExportDate =
     exportedAtMs !== undefined && zone !== undefined
       ? siteLocalDate(exportedAtMs, zone)
       : undefined;
+  // addDays yields undefined outside the supported years. If any date derived
+  // from D falls outside them, the coverage and horizon checks could not run and
+  // would silently pass, so the export date is unusable: report exportedAt as
+  // malformed and treat D as unknown (those checks are skipped, as for an
+  // invalid exportedAt). exportedAt is only reported here when it parsed, so it
+  // is never reported twice.
+  let exportDate: string | undefined;
+  if (siteExportDate !== undefined) {
+    if (
+      addDays(siteExportDate, COVERAGE_DAYS_BEFORE) === undefined ||
+      addDays(siteExportDate, COVERAGE_DAYS_AFTER) === undefined ||
+      addDays(siteExportDate, HORIZON_DAYS) === undefined
+    ) {
+      exportedAtReasons.push({
+        code: "invalid-export-field",
+        field: "exportedAt",
+        problem: "malformed",
+      });
+    } else {
+      exportDate = siteExportDate;
+    }
+  }
 
   // coverage
   const coverageRaw = root["coverage"];
