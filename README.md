@@ -30,8 +30,8 @@ npm run build && npm run lint && npm test
 Start the API (port 3000), then the web app (port 5173), and pick a user in the "Act as"
 switcher. The sample roster is dated March 2027, so set the application clock as `AGENTS.md`
 describes. The API reads `SHIFTSWAP_NOW` once at startup and the swap check uses it. With the
-sample roster it is required: if it is unset, the swap check returns "cannot determine" because
-today is before the export. A malformed value stops the API at startup:
+sample roster it is required: if it is unset, the swap check returns "cannot determine" while the
+system date is before the export. A malformed value stops the API at startup:
 
 ```bash
 SHIFTSWAP_NOW=2027-03-07T14:00:00Z npm run dev:api
