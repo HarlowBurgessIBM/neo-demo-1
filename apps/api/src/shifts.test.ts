@@ -141,11 +141,16 @@ describe("C3: give and take", () => {
     expect(body.give).toHaveLength(expected.length);
   });
 
-  test("no shift in give or take carries an employeeNumber or name", async () => {
+  test("no shift in give or take carries an employeeNumber, and give carries no name", async () => {
     for (const employeeNumber of ["104417", "102286"]) {
       const body = await shiftsFor(employeeNumber);
-      for (const shift of [...body.give, ...body.take]) {
+      for (const shift of body.give) {
         expect(Object.keys(shift).sort()).toEqual(["end", "role", "shiftId", "start", "unit"]);
+      }
+      for (const shift of body.take) {
+        expect(Object.keys(shift).sort()).toEqual(["end", "ownerName", "role", "shiftId", "start", "unit"]);
+      }
+      for (const shift of [...body.give, ...body.take]) {
         expect(shift).not.toHaveProperty("employeeNumber");
         expect(shift).not.toHaveProperty("name");
       }

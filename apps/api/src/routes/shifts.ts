@@ -3,7 +3,7 @@ import { renderExportedAt } from "@shiftswap/rules";
 import { callerOf, requireOperator } from "../identity";
 import type { Roster, RosterShift } from "../roster";
 
-/** A shift as shown to the caller. Deliberately carries no employee number and no name. */
+/** A shift as shown to the caller. Deliberately carries no employee number. */
 export interface Shift {
   shiftId: string;
   unit: string;
@@ -12,13 +12,18 @@ export interface Shift {
   end: string;
 }
 
+/** Another operator's shift on offer: carries the owner's name, and still no employee number. */
+export interface TakeShift extends Shift {
+  ownerName: string;
+}
+
 export interface ShiftsResponse {
   exportedAt: string;
   exportedAtUtcMinute: string;
   exportedAtSiteLocal: string;
   siteTimeZone: string;
   give: Shift[];
-  take: Shift[];
+  take: TakeShift[];
 }
 
 function toShift(shift: RosterShift): Shift {
@@ -42,13 +47,31 @@ function byStartThenId(a: RosterShift, b: RosterShift): number {
   return a.shiftId < b.shiftId ? -1 : 1;
 }
 
-/** Registers GET /api/shifts. Throws if the roster `exportedAt` or site time zone cannot be rendered. */
+/**
+ * Registers GET /api/shifts. Throws if the roster `exportedAt` or site time zone cannot be
+ * rendered, or if a shift's employee number is not an operator's. Messages name no values.
+ */
 export function registerShiftsRoute(app: FastifyInstance, roster: Roster): void {
   const rendering = renderExportedAt(roster.exportedAt, roster.site.timeZone);
   if (!rendering.ok) {
     throw new Error(`roster export time cannot be rendered: ${rendering.problem}`);
   }
+  const operatorNames = new Map(roster.operators.map((operator) => [operator.employeeNumber, operator.name]));
+  roster.shifts.forEach((shift, index) => {
+    if (!operatorNames.has(shift.employeeNumber)) {
+      throw new Error(`roster: shifts[${index}].employeeNumber is not the employee number of an operator`);
+    }
+  });
   const sorted = [...roster.shifts].sort(byStartThenId);
+
+  function toTakeShift(shift: RosterShift): TakeShift {
+    const ownerName = operatorNames.get(shift.employeeNumber);
+    if (ownerName === undefined) {
+      // Unreachable: every shift owner was checked above.
+      throw new Error("roster: a shift owner is not an operator");
+    }
+    return { ...toShift(shift), ownerName };
+  }
 
   app.get(
     "/api/shifts",
@@ -62,7 +85,7 @@ export function registerShiftsRoute(app: FastifyInstance, roster: Roster): void 
         exportedAtSiteLocal: rendering.siteLocal,
         siteTimeZone: roster.site.timeZone,
         give: sorted.filter((shift) => shift.employeeNumber === employeeNumber).map(toShift),
-        take: sorted.filter((shift) => shift.employeeNumber !== employeeNumber).map(toShift),
+        take: sorted.filter((shift) => shift.employeeNumber !== employeeNumber).map(toTakeShift),
       };
     },
   );
