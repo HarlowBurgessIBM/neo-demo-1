@@ -84,6 +84,13 @@ describe("renderExportedAt examples", () => {
     });
   });
 
+  test("reports an offset zone as an invalid time zone", () => {
+    expect(renderExportedAt("2027-03-07T08:00:00Z", "+05:00")).toEqual({
+      ok: false,
+      problem: "invalid-time-zone",
+    });
+  });
+
   test.each([
     ["no Z suffix", "2027-03-07T08:00:00"],
     ["a numeric offset", "2027-03-07T08:00:00+00:00"],
