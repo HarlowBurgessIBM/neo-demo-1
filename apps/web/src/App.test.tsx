@@ -114,6 +114,35 @@ describe("getShifts response validation", () => {
     expect(await getShifts(identity)).toEqual({ kind: "ok", data: fixtures.shifts104417 });
   });
 
+  test("accepts a take entry whose ownerName is null", async () => {
+    const body = structuredClone(fixtures.shifts104417);
+    const last = body.take[body.take.length - 1];
+    expect(last).toBeDefined();
+    if (last !== undefined) {
+      last.ownerName = null;
+    }
+    stubShiftsBody(body);
+
+    expect(await getShifts(identity)).toEqual({ kind: "ok", data: body });
+  });
+
+  test("rejects the whole response when a take entry's ownerName is neither a string nor null", async () => {
+    const malformed: unknown = structuredClone(fixtures.shifts104417);
+    const take = (malformed as { take: Record<string, unknown>[] }).take;
+    const last = take[take.length - 1];
+    expect(last).toBeDefined();
+    if (last !== undefined) {
+      last["ownerName"] = 42;
+    }
+    stubShiftsBody(malformed);
+
+    expect(await getShifts(identity)).toEqual({
+      kind: "error",
+      status: 200,
+      message: "The server answered with an unexpected response.",
+    });
+  });
+
   test("rejects the whole response when one take entry lacks ownerName", async () => {
     const malformed: unknown = structuredClone(fixtures.shifts104417);
     const take = (malformed as { take: Record<string, unknown>[] }).take;

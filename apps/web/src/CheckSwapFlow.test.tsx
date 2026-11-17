@@ -224,6 +224,69 @@ describe("owner names on take options (C18)", () => {
   });
 });
 
+describe("take option whose holder is not in the roster", () => {
+  const NO_HOLDER_TAKE = FCC_TAKE;
+
+  /**
+   * Serves the fixtures, except that 104417's shifts response has the `ownerName` of the take entry
+   * `shiftId` set to null. Every other response, including the dev users, is the fixture's.
+   */
+  function installFixtureFetchWithNullOwner(shiftId: string) {
+    const fixtureFetch = globalThis.fetch;
+    const body = structuredClone(fixtures.shifts104417);
+    const entry = body.take.find((candidate) => candidate.shiftId === shiftId);
+    if (entry === undefined) {
+      throw new Error(`shifts-104417.json has no take entry ${shiftId}.`);
+    }
+    entry.ownerName = null;
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const employee = new Headers(init?.headers).get("X-Employee-Number");
+      if (new URL(url, "http://localhost").pathname === "/api/shifts" && employee === "104417") {
+        return Promise.resolve(
+          new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }),
+        );
+      }
+      return fixtureFetch(input, init);
+    });
+  }
+
+  test("is shown as 'holder not in roster' with no axe-core WCAG A/AA violations, and the other options keep their owners", async () => {
+    installFixtureFetch();
+    installFixtureFetchWithNullOwner(NO_HOLDER_TAKE);
+    const view = render(<App />);
+    await waitFor(() => {
+      expect(within(selectElement("Act as (development only)")).getAllByRole("option")).toHaveLength(
+        fixtures.devUsers.users.length + 1,
+      );
+    });
+    await chooseUser("104417");
+    const takeSelect = selectElement("Shift to take");
+
+    const option = within(takeSelect).getByRole("option", {
+      name: new RegExp(`${NO_HOLDER_TAKE}.*holder not in roster`),
+    });
+    expect(option.getAttribute("value")).toBe(NO_HOLDER_TAKE);
+    const text = option.textContent ?? "";
+    expect(text).not.toContain("held by");
+    expect(text).not.toContain("null");
+
+    const others = fixtures.shifts104417.take.filter((entry) => entry.shiftId !== NO_HOLDER_TAKE);
+    expect(others.length).toBeGreaterThan(0);
+    for (const entry of others) {
+      const matches = within(takeSelect).getAllByRole("option", {
+        name: (accessibleName) =>
+          accessibleName.includes(entry.shiftId) &&
+          entry.ownerName !== null &&
+          accessibleName.includes(`held by ${entry.ownerName}`),
+      });
+      expect(matches.map((match) => match.getAttribute("value"))).toEqual([entry.shiftId]);
+    }
+
+    expect(await wcagViolations(view.container)).toEqual([]);
+  });
+});
+
 describe("refusal from the fixture file (C15)", () => {
   test("the FCC shift the tests pick is the step-8 fixture's refused shift", () => {
     expect(FCC_TAKE).toBe(outsidePilotReason().shiftId);
