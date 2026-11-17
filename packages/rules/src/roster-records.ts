@@ -2,10 +2,41 @@
 // the roster the same way. Records are returned as they are in the export, unvalidated.
 // Pure: no I/O, no clock. Never throws on bad input.
 
+import { isLocalDate } from "./site-time";
+
 export type PlainObject = Record<string, unknown>;
 
 export function isPlainObject(value: unknown): value is PlainObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** A field of a qualification entry, in the order the gate reports them. */
+export type QualificationEntryField = "unit" | "role" | "validThrough";
+
+/**
+ * The fields of a qualification entry that are unusable, in the order unit, role, validThrough:
+ * `unit` and `role` must be strings, `validThrough` a site-local date. The single definition of
+ * entry validity, shared by the gate and the swap evaluation.
+ */
+export function malformedQualificationFields(entry: PlainObject): QualificationEntryField[] {
+  const malformed: QualificationEntryField[] = [];
+  if (typeof entry["unit"] !== "string") {
+    malformed.push("unit");
+  }
+  if (typeof entry["role"] !== "string") {
+    malformed.push("role");
+  }
+  if (!isLocalDate(entry["validThrough"])) {
+    malformed.push("validThrough");
+  }
+  return malformed;
+}
+
+/** A qualification entry that is an object with a string unit and role and a valid date. */
+export function isWellFormedQualificationEntry(
+  entry: unknown,
+): entry is { unit: string; role: string; validThrough: string } & PlainObject {
+  return isPlainObject(entry) && malformedQualificationFields(entry).length === 0;
 }
 
 export function firstShiftWithId(shifts: readonly unknown[], id: string): PlainObject | undefined {

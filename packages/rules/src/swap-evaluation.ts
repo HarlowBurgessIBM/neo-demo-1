@@ -10,6 +10,7 @@ import {
   findSwappedShifts,
   firstOperatorWithNumber,
   isPlainObject,
+  isWellFormedQualificationEntry,
   type PlainObject,
   type ShiftSetEntry,
 } from "./roster-records";
@@ -118,13 +119,10 @@ function readQualifications(operator: PlainObject): Qualification[] | undefined 
   }
   const qualifications: Qualification[] = [];
   for (const entry of raw as unknown[]) {
-    if (!isPlainObject(entry)) {
+    if (!isWellFormedQualificationEntry(entry)) {
       return undefined;
     }
     const { unit, role, validThrough } = entry;
-    if (typeof unit !== "string" || typeof role !== "string" || !isLocalDate(validThrough)) {
-      return undefined;
-    }
     qualifications.push({ unit, role, validThrough });
   }
   return qualifications;
@@ -144,6 +142,15 @@ interface ScheduleShift {
 }
 
 type Resolved = { kind: "in-coverage"; shift: ScheduleShift } | { kind: "outside-coverage" };
+
+/** Start order: by start instant, then by position in the roster. */
+function compareByStart(a: ScheduleShift, b: ScheduleShift): number {
+  return a.startMs - b.startMs || a.index - b.index;
+}
+
+function startsBefore(a: ScheduleShift, b: ScheduleShift): boolean {
+  return compareByStart(a, b) < 0;
+}
 
 /**
  * A shift set entry as a schedule shift. A shift whose start date is outside coverage is
@@ -325,13 +332,16 @@ function evaluateEmployee(
       schedule.push(resolved.shift);
     }
   }
-  schedule.sort((a, b) => a.startMs - b.startMs || a.index - b.index);
+  schedule.sort(compareByStart);
   const takenIndex = schedule.findIndex((shift) => shift.record === took);
   const taken = schedule[takenIndex];
   if (taken === undefined) {
     return undefined;
   }
 
+  // A rest is measured between consecutive shifts in start order, from the previous shift's
+  // end. A shift nested inside its predecessor (starts after it, ends before it) is unspecified
+  // by the standard; the rest after it is still measured from the nested shift's own end.
   const offDutyFindings: OffDutyFinding[] = [];
   const rests: OffDutyPeriod[] = [];
   for (let i = 0; i + 1 < schedule.length; i += 1) {
@@ -346,12 +356,13 @@ function evaluateEmployee(
     }
     rests.push(rest.period);
     if (rest.elapsed < MINIMUM_OFF_DUTY_MINUTES) {
-      // Changed by the swap when it touches the shift taken, or when the shift given lay
-      // inside this rest before the swap: previous.end <= given.start < next.start.
+      // Changed by the swap when it touches the shift taken, or when the shift given sat
+      // between these two neighbours before the swap, in start order (start instant, then
+      // roster index, the order the schedule is sorted in).
       const changedBySwap =
         previous === taken ||
         next === taken ||
-        (given.startMs >= previous.endMs && given.startMs < next.startMs);
+        (!startsBefore(given, previous) && startsBefore(given, next));
       offDutyFindings.push({
         rule: "3.1",
         code: "off-duty-under-minimum",

@@ -8,6 +8,7 @@ import {
   findSwappedShifts,
   firstOperatorWithNumber,
   isPlainObject,
+  malformedQualificationFields,
   type PlainObject,
 } from "./roster-records";
 import {
@@ -409,26 +410,13 @@ export function assessDeterminability(
             });
             return;
           }
-          for (const field of ["unit", "role"] as const) {
-            const value = entry[field];
-            if (typeof value !== "string") {
-              qualificationEntryReasons.push({
-                code: "invalid-export-field",
-                field: `operators.qualifications.${field}`,
-                party,
-                index,
-                problem: problemOf(value),
-              });
-            }
-          }
-          const validThrough = entry["validThrough"];
-          if (!isLocalDate(validThrough)) {
+          for (const field of malformedQualificationFields(entry)) {
             qualificationEntryReasons.push({
               code: "invalid-export-field",
-              field: "operators.qualifications.validThrough",
+              field: `operators.qualifications.${field}`,
               party,
               index,
-              problem: problemOf(validThrough),
+              problem: problemOf(entry[field]),
             });
           }
         });
