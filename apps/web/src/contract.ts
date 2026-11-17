@@ -10,13 +10,18 @@ export interface Shift {
   end: string;
 }
 
+/** A shift offered to take. Unlike a give entry, it carries the name of the person who holds it. */
+export interface TakeShift extends Shift {
+  ownerName: string;
+}
+
 export interface ShiftsResponse {
   exportedAt: string;
   exportedAtUtcMinute: string;
   exportedAtSiteLocal: string;
   siteTimeZone: string;
   give: Shift[];
-  take: Shift[];
+  take: TakeShift[];
 }
 
 /** The body of a swap check request. */

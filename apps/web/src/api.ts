@@ -131,7 +131,15 @@ export function getShifts(identity?: Identity): Promise<GetResult<ShiftsResponse
   return getJson<ShiftsResponse>(
     "/api/shifts",
     identity,
-    (body) => Array.isArray(body["give"]) && Array.isArray(body["take"]),
+    (body) => {
+      const take = body["take"];
+      // Each take entry must carry a string owner name, so the picker can always show it.
+      return (
+        Array.isArray(body["give"]) &&
+        Array.isArray(take) &&
+        take.every((entry) => isRecord(entry) && typeof entry["ownerName"] === "string")
+      );
+    },
   );
 }
 

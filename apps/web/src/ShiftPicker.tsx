@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import type { Shift, SwapPick } from "./contract";
+import type { Shift, SwapPick, TakeShift } from "./contract";
 
 interface ShiftPickerProps {
   give: Shift[];
-  take: Shift[];
+  take: TakeShift[];
   onCheck: (pick: SwapPick) => void;
   /** True while a check is in flight. The button stays focusable but ignores presses. */
   pending: boolean;
@@ -69,7 +69,7 @@ export function ShiftPicker({ give, take, onCheck, pending, focusOnMount }: Shif
           <option value="">Choose a shift to take</option>
           {take.map((shift) => (
             <option key={shift.shiftId} value={shift.shiftId}>
-              {describeShift(shift)}
+              {`${describeShift(shift)} · held by ${shift.ownerName}`}
             </option>
           ))}
         </select>
