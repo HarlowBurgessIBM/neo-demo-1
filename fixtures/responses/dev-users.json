@@ -1,0 +1,74 @@
+{
+  "users": [
+    {
+      "employeeNumber": "104417",
+      "name": "Maya Thibodeaux",
+      "roles": [
+        "operator"
+      ]
+    },
+    {
+      "employeeNumber": "102286",
+      "name": "Luis Fontenot",
+      "roles": [
+        "operator"
+      ]
+    },
+    {
+      "employeeNumber": "107903",
+      "name": "Priya Raman",
+      "roles": [
+        "operator"
+      ]
+    },
+    {
+      "employeeNumber": "101152",
+      "name": "Dwayne Hebert",
+      "roles": [
+        "operator"
+      ]
+    },
+    {
+      "employeeNumber": "106640",
+      "name": "Aisha Okafor",
+      "roles": [
+        "operator"
+      ]
+    },
+    {
+      "employeeNumber": "103078",
+      "name": "Tom Broussard",
+      "roles": [
+        "operator"
+      ]
+    },
+    {
+      "employeeNumber": "108529",
+      "name": "Jerome Guidry",
+      "roles": [
+        "operator"
+      ]
+    },
+    {
+      "employeeNumber": "109364",
+      "name": "Nadia Trahan",
+      "roles": [
+        "operator"
+      ]
+    },
+    {
+      "employeeNumber": "100231",
+      "name": "Renee Landry",
+      "roles": [
+        "shift-supervisor"
+      ]
+    },
+    {
+      "employeeNumber": "100764",
+      "name": "Carl Nguyen",
+      "roles": [
+        "shift-supervisor"
+      ]
+    }
+  ]
+}
