@@ -10,9 +10,12 @@ export interface Shift {
   end: string;
 }
 
-/** A shift offered to take. Unlike a give entry, it carries the name of the person who holds it. */
+/**
+ * A shift offered to take. Unlike a give entry, it carries the name of the person who holds it.
+ * `ownerName` is null when the holder is not in the roster.
+ */
 export interface TakeShift extends Shift {
-  ownerName: string;
+  ownerName: string | null;
 }
 
 export interface ShiftsResponse {

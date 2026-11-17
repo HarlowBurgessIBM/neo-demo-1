@@ -115,7 +115,8 @@ async function getJson<T>(
   }
   if (outcome.status === 200) {
     if (isRecord(outcome.body) && hasExpectedShape(outcome.body)) {
-      // Only the top-level collections are checked; the items are the API's documented JSON.
+      // The caller's shape check decides what is validated. The cast trusts the rest of each
+      // item to match the API's documented JSON.
       return { kind: "ok", data: outcome.body as T };
     }
     return { kind: "error", status: 200, message: "The server answered with an unexpected response." };
@@ -133,11 +134,17 @@ export function getShifts(identity?: Identity): Promise<GetResult<ShiftsResponse
     identity,
     (body) => {
       const take = body["take"];
-      // Each take entry must carry a string owner name, so the picker can always show it.
+      // Each take entry must carry an owner name that is a string, or null when the holder is not
+      // in the roster. A missing or differently typed ownerName rejects the response.
       return (
         Array.isArray(body["give"]) &&
         Array.isArray(take) &&
-        take.every((entry) => isRecord(entry) && typeof entry["ownerName"] === "string")
+        take.every(
+          (entry) =>
+            isRecord(entry) &&
+            "ownerName" in entry &&
+            (typeof entry["ownerName"] === "string" || entry["ownerName"] === null),
+        )
       );
     },
   );

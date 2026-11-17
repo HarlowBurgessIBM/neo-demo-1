@@ -190,7 +190,10 @@ describe("owner names on take options (C18)", () => {
 
     for (const entry of fixtures.shifts104417.take) {
       const matches = within(takeSelect).getAllByRole("option", {
-        name: (accessibleName) => accessibleName.includes(entry.shiftId) && accessibleName.includes(entry.ownerName),
+        name: (accessibleName) =>
+          accessibleName.includes(entry.shiftId) &&
+          entry.ownerName !== null &&
+          accessibleName.includes(entry.ownerName),
       });
       expect(matches.map((option) => option.getAttribute("value"))).toEqual([entry.shiftId]);
     }
@@ -206,7 +209,8 @@ describe("owner names on take options (C18)", () => {
     const giveOptions = within(selectElement("Shift to give")).getAllByRole("option");
     expect(giveOptions).toHaveLength(fixtures.shifts104417.give.length + 1);
     expect(within(selectElement("Shift to give")).queryAllByRole("option", heldBy)).toEqual([]);
-    for (const owner of new Set(fixtures.shifts104417.take.map((entry) => entry.ownerName))) {
+    const owners = fixtures.shifts104417.take.flatMap((entry) => (entry.ownerName === null ? [] : [entry.ownerName]));
+    for (const owner of new Set(owners)) {
       expect(giveOptions.some((option) => (option.textContent ?? "").includes(owner))).toBe(false);
     }
   });

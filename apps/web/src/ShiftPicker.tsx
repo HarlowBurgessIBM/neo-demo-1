@@ -69,7 +69,9 @@ export function ShiftPicker({ give, take, onCheck, pending, focusOnMount }: Shif
           <option value="">Choose a shift to take</option>
           {take.map((shift) => (
             <option key={shift.shiftId} value={shift.shiftId}>
-              {`${describeShift(shift)} · held by ${shift.ownerName}`}
+              {shift.ownerName === null
+                ? `${describeShift(shift)} · holder not in roster`
+                : `${describeShift(shift)} · held by ${shift.ownerName}`}
             </option>
           ))}
         </select>
