@@ -166,6 +166,109 @@ describe("C3: give and take", () => {
   });
 });
 
+interface TakeBody extends ShiftBody {
+  ownerName: unknown;
+}
+
+/** Every string and number found anywhere inside `value`, as strings. Walks objects and arrays. */
+function leafValues(value: unknown): string[] {
+  if (typeof value === "string" || typeof value === "number") {
+    return [String(value)];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap(leafValues);
+  }
+  if (typeof value === "object" && value !== null) {
+    return Object.values(value).flatMap(leafValues);
+  }
+  return [];
+}
+
+describe("C17: take entries name their owner and carry no employee number", () => {
+  const roster = readSampleRoster();
+  const rosterNumbers = [...roster.operators, ...roster.supervisors].map((person) => person.employeeNumber);
+
+  async function takeFor104417(): Promise<TakeBody[]> {
+    const body = await shiftsFor("104417");
+    return body.take as TakeBody[];
+  }
+
+  test("every take entry has a non-empty string ownerName", async () => {
+    const take = await takeFor104417();
+    expect(take.length).toBeGreaterThan(0);
+    for (const entry of take) {
+      expect(typeof entry.ownerName, entry.shiftId).toBe("string");
+      expect((entry.ownerName as string).length, entry.shiftId).toBeGreaterThan(0);
+    }
+  });
+
+  test("CDU-CON1-0319-N is Luis Fontenot's and FCC-CON1-0318-D is Nadia Trahan's", async () => {
+    const take = await takeFor104417();
+    expect(take.find((entry) => entry.shiftId === "CDU-CON1-0319-N")?.ownerName).toBe("Luis Fontenot");
+    expect(take.find((entry) => entry.shiftId === "FCC-CON1-0318-D")?.ownerName).toBe("Nadia Trahan");
+  });
+
+  test("each ownerName is the roster operator's name for that shift's employeeNumber", async () => {
+    const take = await takeFor104417();
+    for (const entry of take) {
+      const rosterShift = roster.shifts.find((shift) => shift.shiftId === entry.shiftId);
+      expect(rosterShift, entry.shiftId).toBeDefined();
+      const operator = roster.operators.find((candidate) => candidate.employeeNumber === rosterShift?.employeeNumber);
+      expect(operator, entry.shiftId).toBeDefined();
+      expect(entry.ownerName, entry.shiftId).toBe(operator?.name);
+    }
+  });
+
+  test("no take entry has an employeeNumber property", async () => {
+    const take = await takeFor104417();
+    for (const entry of take) {
+      expect(entry).not.toHaveProperty("employeeNumber");
+    }
+  });
+
+  test("no value in the take list equals a roster operator or supervisor number", async () => {
+    const take = await takeFor104417();
+    expect(rosterNumbers).toHaveLength(10);
+    const found = leafValues(take).filter((value) => rosterNumbers.includes(value));
+    expect(found).toEqual([]);
+  });
+
+  test("positive control: the same scan finds an employee number injected into an entry", async () => {
+    const take = await takeFor104417();
+    const first = take[0];
+    expect(first).toBeDefined();
+    const injected = [{ ...first, extra: { nested: [rosterNumbers[0]] } }, ...take.slice(1)];
+    expect(leafValues(injected).filter((value) => rosterNumbers.includes(value))).toEqual([rosterNumbers[0]]);
+
+    const asNumber = [{ ...first, extra: Number(rosterNumbers[1]) }];
+    expect(leafValues(asNumber).filter((value) => rosterNumbers.includes(value))).toEqual([rosterNumbers[1]]);
+  });
+
+  test("registration throws when a shift's owner is not an operator, without naming the number", () => {
+    const stranger = "999999";
+    const badRoster = structuredClone(roster);
+    const target = badRoster.shifts[3];
+    expect(target).toBeDefined();
+    if (target === undefined) {
+      return;
+    }
+    expect(rosterNumbers).not.toContain(stranger);
+    target.employeeNumber = stranger;
+
+    let thrown: unknown;
+    try {
+      buildApp({ roster: badRoster });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const message = thrown instanceof Error ? thrown.message : "";
+    expect(message).toContain("shifts[3].employeeNumber");
+    expect(message).not.toContain(stranger);
+  });
+});
+
 describe("C4: export time", () => {
   test("renders the roster export time in UTC and in site-local time", async () => {
     const body = await shiftsFor("104417");
