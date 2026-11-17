@@ -1,8 +1,19 @@
 import { vi } from "vitest";
-import type { DevUsersResponse, RefusedResponse, ShiftsResponse, SwapPick } from "../contract";
+import type {
+  CannotDetermineResponse,
+  DevUsersResponse,
+  RefusedResponse,
+  ShiftsResponse,
+  SwapPick,
+} from "../contract";
+import add3Raw from "../../../../fixtures/responses/add-3.json?raw";
+import missingExportedAtRaw from "../../../../fixtures/responses/cannot-determine-missing-exported-at.json?raw";
+import nowBeforeExportRaw from "../../../../fixtures/responses/cannot-determine-now-before-export.json?raw";
+import staleAndHorizonRaw from "../../../../fixtures/responses/cannot-determine-stale-and-horizon.json?raw";
 import devUsersRaw from "../../../../fixtures/responses/dev-users.json?raw";
 import shifts102286Raw from "../../../../fixtures/responses/shifts-102286.json?raw";
 import shifts104417Raw from "../../../../fixtures/responses/shifts-104417.json?raw";
+import step7Raw from "../../../../fixtures/responses/step-7.json?raw";
 import step8Raw from "../../../../fixtures/responses/step-8.json?raw";
 
 /** The shared response fixtures, parsed once, for assertions in view tests. */
@@ -11,6 +22,11 @@ export const fixtures = {
   shifts104417: JSON.parse(shifts104417Raw) as ShiftsResponse,
   shifts102286: JSON.parse(shifts102286Raw) as ShiftsResponse,
   step8: JSON.parse(step8Raw) as RefusedResponse,
+  step7: JSON.parse(step7Raw) as CannotDetermineResponse,
+  add3: JSON.parse(add3Raw) as CannotDetermineResponse,
+  staleAndHorizon: JSON.parse(staleAndHorizonRaw) as CannotDetermineResponse,
+  nowBeforeExport: JSON.parse(nowBeforeExportRaw) as CannotDetermineResponse,
+  missingExportedAt: JSON.parse(missingExportedAtRaw) as CannotDetermineResponse,
 };
 
 /** The pick the step-8 fixture answers: a CDU shift given for an FCC shift, which is outside the pilot. */
@@ -37,6 +53,11 @@ export interface FixtureFetchOptions {
    * which answers the step-8 pick with the step-8 fixture (422) and anything else with 404.
    */
   swapCheck?: (call: RecordedCall, pick: SwapPick | undefined) => FixtureReply | undefined;
+  /**
+   * Overrides the answer to GET /api/shifts, for example a different body or a 503. Return undefined
+   * to fall through to the default, which serves the fixture for the acting employee.
+   */
+  shifts?: (call: RecordedCall) => FixtureReply | undefined;
 }
 
 export interface FixtureFetch {
@@ -76,6 +97,10 @@ function answer(call: RecordedCall, options: FixtureFetchOptions): FixtureReply 
     return { status: 200, body: fixtures.devUsers };
   }
   if (call.method === "GET" && call.path === "/api/shifts") {
+    const override = options.shifts?.(call);
+    if (override !== undefined) {
+      return override;
+    }
     if (employee === null) {
       return { status: 401, body: { kind: "unauthenticated" } };
     }
