@@ -1,0 +1,14 @@
+{
+  "outcome": "cannot-determine",
+  "exportedAt": "2027-03-07T08:00:00Z",
+  "exportedAtUtcMinute": "2027-03-07T08:00Z",
+  "exportedAtSiteLocal": "2027-03-07T02:00",
+  "siteTimeZone": "America/Chicago",
+  "reasons": [
+    {
+      "code": "now-before-export",
+      "exportedAt": "2027-03-07T08:00:00Z",
+      "now": "2027-03-07T07:59:59.000Z"
+    }
+  ]
+}
