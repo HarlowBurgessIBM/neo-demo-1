@@ -36,7 +36,7 @@ export type SwapCheckResult =
 type Outcome = { status: number; body: unknown } | ApiError;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isForbiddenBody(body: unknown): body is ForbiddenResponse {
@@ -99,24 +99,35 @@ function commonFailure(outcome: { status: number; body: unknown }): Unauthentica
   return undefined;
 }
 
-async function getJson<T>(path: string, identity: Identity | undefined): Promise<GetResult<T>> {
+async function getJson<T>(
+  path: string,
+  identity: Identity | undefined,
+  hasExpectedShape: (body: Record<string, unknown>) => boolean,
+): Promise<GetResult<T>> {
   const outcome = await send(path, { method: "GET", headers: identityHeaders(identity) });
   if ("kind" in outcome) {
     return outcome;
   }
-  if (outcome.status === 200 && isRecord(outcome.body)) {
-    // The body is the API's documented JSON for this path; the shape is not re-validated here.
-    return { kind: "ok", data: outcome.body as T };
+  if (outcome.status === 200) {
+    if (isRecord(outcome.body) && hasExpectedShape(outcome.body)) {
+      // Only the top-level collections are checked; the items are the API's documented JSON.
+      return { kind: "ok", data: outcome.body as T };
+    }
+    return { kind: "error", status: 200, message: "The server answered with an unexpected response." };
   }
   return commonFailure(outcome) ?? httpError(outcome.status);
 }
 
 export function getDevUsers(): Promise<GetResult<DevUsersResponse>> {
-  return getJson<DevUsersResponse>("/api/dev/users", undefined);
+  return getJson<DevUsersResponse>("/api/dev/users", undefined, (body) => Array.isArray(body["users"]));
 }
 
 export function getShifts(identity?: Identity): Promise<GetResult<ShiftsResponse>> {
-  return getJson<ShiftsResponse>("/api/shifts", identity);
+  return getJson<ShiftsResponse>(
+    "/api/shifts",
+    identity,
+    (body) => Array.isArray(body["give"]) && Array.isArray(body["take"]),
+  );
 }
 
 export async function postSwapCheck(identity: Identity | undefined, pick: SwapPick): Promise<SwapCheckResult> {
