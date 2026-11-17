@@ -8,12 +8,22 @@ import type { FixtureFetchOptions } from "./test-support/fixtureFetch";
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
-  vi.unstubAllEnvs();
 });
 
 const GIVE_PICK = "CDU-CON1-0318-N";
+// Named literally because criterion C11 names it; the first test under C15 ties it to the fixture.
 const FCC_TAKE = "FCC-CON1-0318-D";
 const SECTION_SIGN = "\u00a7";
+
+/** The step-8 fixture's outside-pilot-units reason, which is the one the refusal view words by unit. */
+function outsidePilotReason() {
+  for (const reason of fixtures.step8.reasons) {
+    if (reason.code === "outside-pilot-units") {
+      return reason;
+    }
+  }
+  throw new Error("step-8.json has no outside-pilot-units reason.");
+}
 
 function selectElement(name: string): HTMLSelectElement {
   const element = screen.getByRole("combobox", { name });
@@ -25,10 +35,11 @@ function selectElement(name: string): HTMLSelectElement {
 
 /** The values of a select's options, without the empty placeholder. */
 function optionValues(select: HTMLSelectElement): string[] {
-  return within(select)
+  const values = within(select)
     .getAllByRole("option")
-    .map((option) => option.getAttribute("value") ?? "")
-    .filter((value) => value !== "");
+    .map((option) => option.getAttribute("value") ?? "");
+  expect(values.filter((value) => value === "")).toHaveLength(1);
+  return values.filter((value) => value !== "");
 }
 
 function ids(shifts: { shiftId: string }[]): string[] {
@@ -115,8 +126,8 @@ describe("picker from the shared fixtures (C10)", () => {
     expect(post?.headers.get("X-Roles")).toBe("operator");
 
     expect(within(refusal).getByRole("heading", { level: 2, name: "Swap refused" })).toBeTruthy();
-    expect(refusal.textContent).toContain(FCC_TAKE);
-    expect(refusal.textContent).toContain("FCC");
+    const reason = outsidePilotReason();
+    expect(refusal.textContent).toContain(`${reason.shiftId} is in ${reason.unit},`);
     // The picker is replaced by the refusal.
     expect(screen.queryByRole("form", { name: "Choose the shifts to swap" })).toBeNull();
   });
@@ -132,11 +143,12 @@ describe("pilot notices (C11)", () => {
 
   test("the refusal view contains the same notices, names the FCC shift and has no section-sign text", async () => {
     const { container } = await renderRefusal();
+    const notices = screen.getByRole("complementary", { name: "Pilot notices" });
     for (const text of NOTICE_TEXT) {
-      expect(container.textContent).toContain(text);
+      expect(notices.textContent).toContain(text);
     }
     expect(container.textContent).toContain(FCC_TAKE);
-    expect(container.textContent).not.toContain(`${SECTION_SIGN} 3`);
+    // The page must not cite a section of the rules; any section sign is a leak.
     expect(container.textContent).not.toContain(SECTION_SIGN);
   });
 });
@@ -158,6 +170,10 @@ describe("accessibility (C14)", () => {
 });
 
 describe("refusal from the fixture file (C15)", () => {
+  test("the FCC shift the tests pick is the step-8 fixture's refused shift", () => {
+    expect(FCC_TAKE).toBe(outsidePilotReason().shiftId);
+  });
+
   test("the refusal list has one item per reason in step-8.json", async () => {
     const { refusal } = await renderRefusal();
     expect(within(refusal).getAllByRole("listitem")).toHaveLength(fixtures.step8.reasons.length);
@@ -181,16 +197,22 @@ describe("not evaluated (501)", () => {
     return { ...rendered, section };
   }
 
-  test("shows the not-evaluated view with the notices and no outcome wording", async () => {
-    const { container, section } = await renderNotEvaluated();
+  test("shows the not-evaluated view with the notices and exactly the shipped copy", async () => {
+    const { section } = await renderNotEvaluated();
 
     expect(within(section).getByRole("heading", { level: 2, name: "Not evaluated" })).toBeTruthy();
     expect(screen.queryByRole("region", { name: "Swap refused" })).toBeNull();
-    expect(screen.getByRole("complementary", { name: "Pilot notices" })).toBeTruthy();
+    const notices = screen.getByRole("complementary", { name: "Pilot notices" });
     for (const text of NOTICE_TEXT) {
-      expect(container.textContent).toContain(text);
+      expect(notices.textContent).toContain(text);
     }
-    expect(container.textContent).not.toMatch(/outcome|result|approved|rejected|eligible|compliant/i);
+    // Heading, paragraph and the "Choose again" button, in order. Any other wording is a copy change to review.
+    expect(section.textContent).toBe(
+      "Not evaluated" +
+        "The pick passed the pilot-scope checks. Evaluation is not available yet." +
+        "Choose again",
+    );
+    expect(section.textContent).not.toMatch(/outcome/i);
   });
 
   test("the not-evaluated view has no axe-core WCAG A/AA violations", async () => {
