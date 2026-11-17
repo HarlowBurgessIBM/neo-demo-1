@@ -1,12 +1,8 @@
 import type { FastifyInstance } from "fastify";
-import type { Roster } from "../roster";
+import { ROSTER_UNAVAILABLE } from "../identity";
+import { devUsers, type DevUser, type RosterSource } from "../roster";
 
-/** A roster person the development-only user switcher can act as. */
-export interface DevUser {
-  employeeNumber: string;
-  name: string;
-  roles: string[];
-}
+export type { DevUser };
 
 export interface DevUsersResponse {
   users: DevUser[];
@@ -15,21 +11,17 @@ export interface DevUsersResponse {
 /**
  * Registers GET /api/dev/users, the development-only user switcher (engineering standard § 8.3).
  * The caller must not register it when NODE_ENV is production. No identity check, and nothing is
- * logged: the body names people on purpose, the logs must not (NFR-PRIV-001).
+ * logged but a fixed line: the body names people on purpose, the logs must not (NFR-PRIV-001).
+ * The roster is read per request; an unreadable one is a 503.
  */
-export function registerDevUsersRoute(app: FastifyInstance, roster: Roster): void {
-  const users: DevUser[] = [
-    ...roster.operators.map((operator) => ({
-      employeeNumber: operator.employeeNumber,
-      name: operator.name,
-      roles: ["operator"],
-    })),
-    ...roster.supervisors.map((supervisor) => ({
-      employeeNumber: supervisor.employeeNumber,
-      name: supervisor.name,
-      roles: ["shift-supervisor"],
-    })),
-  ];
-
-  app.get("/api/dev/users", (): DevUsersResponse => ({ users }));
+export function registerDevUsersRoute(app: FastifyInstance, source: RosterSource): void {
+  app.get("/api/dev/users", (request, reply) => {
+    const read = source();
+    if (!read.ok) {
+      request.log.warn("roster unavailable");
+      return reply.code(503).send(ROSTER_UNAVAILABLE);
+    }
+    const body: DevUsersResponse = { users: devUsers(read.raw) };
+    return reply.send(body);
+  });
 }

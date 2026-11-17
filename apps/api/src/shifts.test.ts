@@ -1,8 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { buildApp } from "./app";
-import type { Roster } from "./roster";
-import { headersFor, readFixture, readSampleRoster } from "./test-support";
+import { headersFor, readFixture, readSampleRoster, type Roster } from "./test-support";
 
 interface ShiftBody {
   shiftId: string;

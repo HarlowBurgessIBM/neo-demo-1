@@ -1,7 +1,13 @@
 import type { FastifyInstance } from "fastify";
-import { renderExportedAt } from "@shiftswap/rules";
-import { callerOf, requireOperator } from "../identity";
-import type { Roster, RosterShift } from "../roster";
+import { callerOf, requireOperator, rosterOf } from "../identity";
+import {
+  exportStamp,
+  listedShifts,
+  operatorNames,
+  type ExportStamp,
+  type RosterShift,
+  type RosterSource,
+} from "../roster";
 
 /** A shift as shown to the caller. Deliberately carries no employee number. */
 export interface Shift {
@@ -20,11 +26,8 @@ export interface TakeShift extends Shift {
   ownerName: string | null;
 }
 
-export interface ShiftsResponse {
-  exportedAt: string;
-  exportedAtUtcMinute: string;
-  exportedAtSiteLocal: string;
-  siteTimeZone: string;
+/** The four export stamp fields are all strings or all null, when the export time cannot be rendered. */
+export interface ShiftsResponse extends ExportStamp {
   give: Shift[];
   take: TakeShift[];
 }
@@ -50,33 +53,22 @@ function byStartThenId(a: RosterShift, b: RosterShift): number {
   return a.shiftId < b.shiftId ? -1 : 1;
 }
 
-/**
- * Registers GET /api/shifts. Throws if the roster `exportedAt` or site time zone cannot be
- * rendered. The message names no values.
- */
-export function registerShiftsRoute(app: FastifyInstance, roster: Roster): void {
-  const rendering = renderExportedAt(roster.exportedAt, roster.site.timeZone);
-  if (!rendering.ok) {
-    throw new Error(`roster export time cannot be rendered: ${rendering.problem}`);
-  }
-  const operatorNames = new Map(roster.operators.map((operator) => [operator.employeeNumber, operator.name]));
-  const sorted = [...roster.shifts].sort(byStartThenId);
-
-  function toTakeShift(shift: RosterShift): TakeShift {
-    return { ...toShift(shift), ownerName: operatorNames.get(shift.employeeNumber) ?? null };
-  }
-
+/** Registers GET /api/shifts. The roster is the one the identity hook read for this request. */
+export function registerShiftsRoute(app: FastifyInstance, source: RosterSource): void {
   app.get(
     "/api/shifts",
-    { onRequest: requireOperator(roster) },
+    { onRequest: requireOperator(source) },
     (request): ShiftsResponse => {
-      const caller = callerOf(request);
-      const employeeNumber = caller?.employeeNumber;
+      const roster = rosterOf(request);
+      const employeeNumber = callerOf(request)?.employeeNumber;
+      const sorted = listedShifts(roster).sort(byStartThenId);
+      const names = operatorNames(roster);
+      const toTakeShift = (shift: RosterShift): TakeShift => ({
+        ...toShift(shift),
+        ownerName: names.get(shift.employeeNumber) ?? null,
+      });
       return {
-        exportedAt: roster.exportedAt,
-        exportedAtUtcMinute: rendering.utcMinute,
-        exportedAtSiteLocal: rendering.siteLocal,
-        siteTimeZone: roster.site.timeZone,
+        ...exportStamp(roster),
         give: sorted.filter((shift) => shift.employeeNumber === employeeNumber).map(toShift),
         take: sorted.filter((shift) => shift.employeeNumber !== employeeNumber).map(toTakeShift),
       };

@@ -1,15 +1,15 @@
 import Fastify, { type FastifyInstance, type FastifyServerOptions, type RouteOptions } from "fastify";
 import { defaultRosterPath } from "./config";
-import { loadRoster, type Roster } from "./roster";
+import { fileRosterSource, fixedRosterSource, type RosterSource } from "./roster";
 import { registerDevUsersRoute } from "./routes/dev-users";
 import { registerShiftsRoute } from "./routes/shifts";
 import { registerSwapChecksRoute } from "./routes/swap-checks";
 
 export interface BuildAppOptions {
   fastify?: FastifyServerOptions;
-  /** An already-parsed roster. Takes precedence over `rosterPath`. */
-  roster?: Roster;
-  /** Path to the roster file. Defaults to the repo's sample roster. */
+  /** A raw JSON roster value, served on every request. Takes precedence over `rosterPath`. */
+  roster?: unknown;
+  /** Path to the roster file, read on every request. Defaults to the repo's sample roster. */
   rosterPath?: string;
   /** `NODE_ENV`. Dev-only routes are not registered when it is `production`. */
   nodeEnv?: string | undefined;
@@ -25,18 +25,23 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     app.addHook("onRoute", options.onRoute);
   }
 
-  const roster = options.roster ?? loadRoster(options.rosterPath ?? defaultRosterPath);
+  // Nothing is read here: the roster is read per request, so a missing file does not stop the app.
+  const source: RosterSource =
+    options.roster !== undefined
+      ? fixedRosterSource(options.roster)
+      : fileRosterSource(options.rosterPath ?? defaultRosterPath);
 
-  // No identity check: health must stay reachable without the access gateway (NFR-REL-001).
+  // No identity check and no roster read: health must stay reachable without the access gateway
+  // and with the roster unavailable (NFR-REL-001).
   app.get("/api/healthz", () => ({ status: "ok" }));
 
-  registerShiftsRoute(app, roster);
+  registerShiftsRoute(app, source);
 
-  registerSwapChecksRoute(app, roster);
+  registerSwapChecksRoute(app, source);
 
   // Development-only user switcher (engineering standard § 8.3). Absent in production, so 404.
   if (options.nodeEnv !== "production") {
-    registerDevUsersRoute(app, roster);
+    registerDevUsersRoute(app, source);
   }
 
   return app;

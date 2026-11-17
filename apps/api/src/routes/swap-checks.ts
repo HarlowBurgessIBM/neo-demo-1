@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { callerOf, requireOperator } from "../identity";
-import type { Roster, RosterShift } from "../roster";
+import { callerOf, requireOperator, rosterOf } from "../identity";
+import { refusalShifts, type RosterSource } from "../roster";
 
 /** The units in scope for the pilot. Any other unit is refused before evaluation. */
 export const PILOT_UNITS = ["CDU", "HCU"] as const;
@@ -32,8 +32,9 @@ export interface GiveShiftNotYours {
   code: "give-shift-not-yours";
 }
 
-function isPilotUnit(unit: string): boolean {
-  return PILOT_UNITS.some((pilotUnit) => pilotUnit === unit);
+function isOutsidePilot(unit: unknown): unit is string {
+  // A unit that is not a string is not refused here: it falls through to the later checks.
+  return typeof unit === "string" && !PILOT_UNITS.some((pilotUnit) => pilotUnit === unit);
 }
 
 /**
@@ -46,15 +47,13 @@ function evaluateSwap(reply: FastifyReply): FastifyReply {
   return reply.code(501).send(body);
 }
 
-/** Registers POST /api/swap-checks. */
-export function registerSwapChecksRoute(app: FastifyInstance, roster: Roster): void {
-  const shiftsById = new Map<string, RosterShift>(roster.shifts.map((shift) => [shift.shiftId, shift]));
-
+/** Registers POST /api/swap-checks. The roster is the one the identity hook read for this request. */
+export function registerSwapChecksRoute(app: FastifyInstance, source: RosterSource): void {
   app.post<{ Body: SwapCheckBody }>(
     "/api/swap-checks",
     {
       // Identity runs before body validation.
-      onRequest: requireOperator(roster),
+      onRequest: requireOperator(source),
       schema: {
         body: {
           type: "object",
@@ -75,6 +74,7 @@ export function registerSwapChecksRoute(app: FastifyInstance, roster: Roster): v
       }
 
       const { giveShiftId, takeShiftId } = request.body;
+      const shiftsById = refusalShifts(rosterOf(request));
 
       // Unknown and not-yours get the same answer so shift ownership cannot be probed.
       const give = shiftsById.get(giveShiftId);
@@ -88,6 +88,7 @@ export function registerSwapChecksRoute(app: FastifyInstance, roster: Roster): v
         return reply.code(422).send(body);
       };
 
+      // A take shift is found by its id alone: a missing or non-string owner is not "unknown".
       const take = shiftsById.get(takeShiftId);
       if (take === undefined) {
         return refuse([{ code: "unknown-shift", shiftId: takeShiftId }]);
@@ -96,9 +97,12 @@ export function registerSwapChecksRoute(app: FastifyInstance, roster: Roster): v
         return refuse([{ code: "take-shift-is-own", shiftId: takeShiftId }]);
       }
 
-      const outsidePilot: RefusalReason[] = [give, take]
-        .filter((shift) => !isPilotUnit(shift.unit))
-        .map((shift) => ({ code: "outside-pilot-units", shiftId: shift.shiftId, unit: shift.unit }));
+      const outsidePilot: RefusalReason[] = [];
+      for (const shift of [give, take]) {
+        if (isOutsidePilot(shift.unit)) {
+          outsidePilot.push({ code: "outside-pilot-units", shiftId: shift.shiftId, unit: shift.unit });
+        }
+      }
       if (outsidePilot.length > 0) {
         return refuse(outsidePilot);
       }
