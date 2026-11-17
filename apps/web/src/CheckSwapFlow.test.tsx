@@ -169,6 +169,57 @@ describe("accessibility (C14)", () => {
   });
 });
 
+describe("owner names on take options (C18)", () => {
+  const HELD_BY = " held by ";
+
+  test("the take options for CDU-CON1-0319-N and FCC-CON1-0318-D name Luis Fontenot and Nadia Trahan", async () => {
+    await renderPickerFor104417();
+    const takeSelect = selectElement("Shift to take");
+
+    const luis = within(takeSelect).getByRole("option", { name: /CDU-CON1-0319-N.*Luis Fontenot/ });
+    expect(luis.getAttribute("value")).toBe("CDU-CON1-0319-N");
+
+    const nadia = within(takeSelect).getByRole("option", { name: /FCC-CON1-0318-D.*Nadia Trahan/ });
+    expect(nadia.getAttribute("value")).toBe("FCC-CON1-0318-D");
+  });
+
+  test("every take option's accessible name contains the owner name from its fixture entry", async () => {
+    await renderPickerFor104417();
+    const takeSelect = selectElement("Shift to take");
+    expect(fixtures.shifts104417.take.length).toBeGreaterThan(0);
+
+    for (const entry of fixtures.shifts104417.take) {
+      const matches = within(takeSelect).getAllByRole("option", {
+        name: (accessibleName) => accessibleName.includes(entry.shiftId) && accessibleName.includes(entry.ownerName),
+      });
+      expect(matches.map((option) => option.getAttribute("value"))).toEqual([entry.shiftId]);
+    }
+  });
+
+  test("every take option says who holds it, and no give option does", async () => {
+    await renderPickerFor104417();
+    const heldBy = { name: (accessibleName: string) => accessibleName.includes(HELD_BY) };
+
+    const takeHeld = within(selectElement("Shift to take")).getAllByRole("option", heldBy);
+    expect(takeHeld).toHaveLength(fixtures.shifts104417.take.length);
+
+    const giveOptions = within(selectElement("Shift to give")).getAllByRole("option");
+    expect(giveOptions).toHaveLength(fixtures.shifts104417.give.length + 1);
+    expect(within(selectElement("Shift to give")).queryAllByRole("option", heldBy)).toEqual([]);
+    for (const owner of new Set(fixtures.shifts104417.take.map((entry) => entry.ownerName))) {
+      expect(giveOptions.some((option) => (option.textContent ?? "").includes(owner))).toBe(false);
+    }
+  });
+
+  test("the picker showing owner names has no axe-core WCAG A/AA violations", async () => {
+    const { container } = await renderPickerFor104417();
+    expect(
+      within(selectElement("Shift to take")).getByRole("option", { name: /CDU-CON1-0319-N.*Luis Fontenot/ }),
+    ).toBeTruthy();
+    expect(await wcagViolations(container)).toEqual([]);
+  });
+});
+
 describe("refusal from the fixture file (C15)", () => {
   test("the FCC shift the tests pick is the step-8 fixture's refused shift", () => {
     expect(FCC_TAKE).toBe(outsidePilotReason().shiftId);

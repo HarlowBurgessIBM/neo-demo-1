@@ -98,6 +98,39 @@ describe("outside production", () => {
   });
 });
 
+describe("getShifts response validation", () => {
+  function stubShiftsBody(body: unknown) {
+    vi.stubGlobal("fetch", () =>
+      Promise.resolve(
+        new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }),
+      ),
+    );
+  }
+
+  const identity = { employeeNumber: "104417", roles: ["operator"] };
+
+  test("accepts the unmodified 104417 fixture", async () => {
+    stubShiftsBody(fixtures.shifts104417);
+    expect(await getShifts(identity)).toEqual({ kind: "ok", data: fixtures.shifts104417 });
+  });
+
+  test("rejects the whole response when one take entry lacks ownerName", async () => {
+    const malformed: unknown = structuredClone(fixtures.shifts104417);
+    const take = (malformed as { take: Record<string, unknown>[] }).take;
+    expect(take.length).toBeGreaterThan(1);
+    const last = take[take.length - 1];
+    expect(last).toBeDefined();
+    delete last?.["ownerName"];
+    stubShiftsBody(malformed);
+
+    expect(await getShifts(identity)).toEqual({
+      kind: "error",
+      status: 200,
+      message: "The server answered with an unexpected response.",
+    });
+  });
+});
+
 describe("in production", () => {
   test("renders no switcher, requests no dev users and attaches no identity header", async () => {
     vi.stubEnv("PROD", true);
