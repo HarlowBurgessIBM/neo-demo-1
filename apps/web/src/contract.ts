@@ -68,6 +68,7 @@ export type CannotDetermineReason =
     }
   | { code: "coverage-mismatch"; field: "coverage.from" | "coverage.to"; actual: string; expected: string }
   | { code: "now-before-export"; exportedAt: string; now: string }
+  // `ageMinutes` is the 0-59 remainder after whole hours, not the total age in minutes.
   | { code: "export-stale"; ageHours: number; ageMinutes: number; limitHours: 26 }
   | { code: "missing-shift"; shiftId: string }
   | { code: "owner-not-operator"; shiftId: string; party: CannotDetermineParty }

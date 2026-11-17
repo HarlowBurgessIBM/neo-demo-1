@@ -11,8 +11,19 @@ const GENERIC_REASON = "The roster data has a problem this page cannot describe.
 /** A reason code this build does not know. The type system says it cannot happen; the wire can. */
 function describeUnrecognisedReason(reason: never): string {
   const shape: unknown = reason;
-  if (typeof shape === "object" && shape !== null && "shiftId" in shape && typeof shape.shiftId === "string") {
-    return `${shape.shiftId} could not be checked with the roster data available.`;
+  if (typeof shape !== "object" || shape === null) {
+    return GENERIC_REASON;
+  }
+  const code = "code" in shape && typeof shape.code === "string" ? shape.code : null;
+  const shiftId = "shiftId" in shape && typeof shape.shiftId === "string" ? shape.shiftId : null;
+  if (code !== null && shiftId !== null) {
+    return `Unrecognised reason "${code}" for ${shiftId}.`;
+  }
+  if (code !== null) {
+    return `Unrecognised reason "${code}".`;
+  }
+  if (shiftId !== null) {
+    return `${shiftId} could not be checked with the roster data available.`;
   }
   return GENERIC_REASON;
 }
@@ -29,13 +40,15 @@ function describeExportProblem(
     case "missing":
       return `The roster export has no ${field}.`;
     case "malformed":
-      return `The roster export's ${field} is not in a form that can be read.`;
+      return `The ${field} in the roster export cannot be read.`;
     case "unknown-time-zone":
-      return `The roster export's ${field} is not a time zone this system knows.`;
+      return `The time zone in the roster export (${field}) is not one this system knows.`;
     case "from-after-to":
-      return `The roster export's ${field} starts after it ends.`;
-    default:
-      return `The roster export's ${field} cannot be used.`;
+      return `The coverage period in the roster export (${field}) starts after it ends.`;
+    default: {
+      const unrecognised: never = problem;
+      return `The ${field} in the roster export has an unrecognised problem "${String(unrecognised)}".`;
+    }
   }
 }
 
