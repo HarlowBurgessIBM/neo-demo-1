@@ -1,10 +1,53 @@
-import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyServerOptions, type RouteOptions } from "fastify";
+import type { evaluateSwap } from "@shiftswap/rules";
+import { defaultRosterPath } from "./config";
+import { fileRosterSource, fixedRosterSource, type RosterSource } from "./roster";
+import { registerDevUsersRoute } from "./routes/dev-users";
+import { registerShiftsRoute } from "./routes/shifts";
+import { registerSwapChecksRoute } from "./routes/swap-checks";
 
-// Skeleton only. No ShiftSwap endpoint is built yet.
-export function buildApp(options: FastifyServerOptions = {}): FastifyInstance {
-  const app = Fastify(options);
+export interface BuildAppOptions {
+  fastify?: FastifyServerOptions;
+  /** A raw JSON roster value, served on every request. Takes precedence over `rosterPath`. */
+  roster?: unknown;
+  /** Path to the roster file, read on every request. Defaults to the repo's sample roster. */
+  rosterPath?: string;
+  /** `NODE_ENV`. Dev-only routes are not registered when it is `production`. */
+  nodeEnv?: string | undefined;
+  /** Observes every route registered, including health. */
+  onRoute?: (route: RouteOptions) => void;
+  /** The clock, in epoch milliseconds. Defaults to `Date.now`. Tests inject a fixed one. */
+  now?: () => number;
+  /** The swap evaluator. Defaults to `evaluateSwap`. Tests inject another, to reach unreachable paths. */
+  evaluate?: typeof evaluateSwap;
+}
 
+export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
+  const app = Fastify({ ...options.fastify, exposeHeadRoutes: false });
+
+  // Added before any route so that every route is observed.
+  if (options.onRoute !== undefined) {
+    app.addHook("onRoute", options.onRoute);
+  }
+
+  // Nothing is read here: the roster is read per request, so a missing file does not stop the app.
+  const source: RosterSource =
+    options.roster !== undefined
+      ? fixedRosterSource(options.roster)
+      : fileRosterSource(options.rosterPath ?? defaultRosterPath);
+
+  // No identity check and no roster read: health must stay reachable without the access gateway
+  // and with the roster unavailable (NFR-REL-001).
   app.get("/api/healthz", () => ({ status: "ok" }));
+
+  registerShiftsRoute(app, source);
+
+  registerSwapChecksRoute(app, source, options.now ?? Date.now, options.evaluate);
+
+  // Development-only user switcher (engineering standard § 8.3). Absent in production, so 404.
+  if (options.nodeEnv !== "production") {
+    registerDevUsersRoute(app, source);
+  }
 
   return app;
 }

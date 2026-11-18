@@ -1,0 +1,370 @@
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { App } from "./App";
+import { wcagViolations } from "./axe";
+import { fixtures, installFixtureFetch } from "./test-support/fixtureFetch";
+import type { FixtureFetchOptions } from "./test-support/fixtureFetch";
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+const GIVE_PICK = "CDU-CON1-0318-N";
+// Named literally because criterion C11 names it; the first test under C15 ties it to the fixture.
+const FCC_TAKE = "FCC-CON1-0318-D";
+const SECTION_SIGN = "\u00a7";
+
+/** The step-8 fixture's outside-pilot-units reason, which is the one the refusal view words by unit. */
+function outsidePilotReason() {
+  for (const reason of fixtures.step8.reasons) {
+    if (reason.code === "outside-pilot-units") {
+      return reason;
+    }
+  }
+  throw new Error("step-8.json has no outside-pilot-units reason.");
+}
+
+function selectElement(name: string): HTMLSelectElement {
+  const element = screen.getByRole("combobox", { name });
+  if (!(element instanceof HTMLSelectElement)) {
+    throw new Error(`${name} is not a select element.`);
+  }
+  return element;
+}
+
+/** The values of a select's options, without the empty placeholder. */
+function optionValues(select: HTMLSelectElement): string[] {
+  const values = within(select)
+    .getAllByRole("option")
+    .map((option) => option.getAttribute("value") ?? "");
+  expect(values.filter((value) => value === "")).toHaveLength(1);
+  return values.filter((value) => value !== "");
+}
+
+function ids(shifts: { shiftId: string }[]): string[] {
+  return shifts.map((shift) => shift.shiftId);
+}
+
+async function renderWithUsersLoaded(options?: FixtureFetchOptions) {
+  const fetchStub = installFixtureFetch(options);
+  const view = render(<App />);
+  await waitFor(() => {
+    expect(within(selectElement("Act as (development only)")).getAllByRole("option")).toHaveLength(
+      fixtures.devUsers.users.length + 1,
+    );
+  });
+  return { fetchStub, ...view };
+}
+
+/** Chooses a user and waits until that user's picker has loaded. */
+async function chooseUser(employeeNumber: string) {
+  fireEvent.change(selectElement("Act as (development only)"), { target: { value: employeeNumber } });
+  await screen.findByRole("form", { name: "Choose the shifts to swap" });
+}
+
+function pick(give: string, take: string) {
+  fireEvent.change(selectElement("Shift to give"), { target: { value: give } });
+  fireEvent.change(selectElement("Shift to take"), { target: { value: take } });
+}
+
+function checkSwap() {
+  fireEvent.click(screen.getByRole("button", { name: "Check swap" }));
+}
+
+async function renderPickerFor104417() {
+  const rendered = await renderWithUsersLoaded();
+  await chooseUser("104417");
+  return rendered;
+}
+
+async function renderRefusal() {
+  const rendered = await renderPickerFor104417();
+  pick(GIVE_PICK, FCC_TAKE);
+  checkSwap();
+  const refusal = await screen.findByRole("region", { name: "Swap refused" });
+  return { ...rendered, refusal };
+}
+
+const NOTICE_TEXT = ["2027-03-07T08:00Z", "02:00", "rostered shifts only", "CDU and HCU only", "holdovers not assessed"];
+
+describe("picker from the shared fixtures (C10)", () => {
+  test("the give options equal the 104417 fixture's give list, in order", async () => {
+    await renderPickerFor104417();
+    expect(optionValues(selectElement("Shift to give"))).toEqual(ids(fixtures.shifts104417.give));
+  });
+
+  test("switching to 102286 replaces the give options with Luis's, and back again restores 104417's", async () => {
+    await renderPickerFor104417();
+
+    await chooseUser("102286");
+    await waitFor(() => {
+      expect(optionValues(selectElement("Shift to give"))).toEqual(ids(fixtures.shifts102286.give));
+    });
+    const luisGive = optionValues(selectElement("Shift to give"));
+    for (const mayaId of ids(fixtures.shifts104417.give)) {
+      expect(luisGive).not.toContain(mayaId);
+    }
+
+    await chooseUser("104417");
+    await waitFor(() => {
+      expect(optionValues(selectElement("Shift to give"))).toEqual(ids(fixtures.shifts104417.give));
+    });
+    expect(optionValues(selectElement("Shift to take"))).toContain(FCC_TAKE);
+    expect(optionValues(selectElement("Shift to take"))).toEqual(ids(fixtures.shifts104417.take));
+  });
+
+  test("selecting the FCC shift and checking posts the pick with 104417's identity and renders the refusal", async () => {
+    const { fetchStub, refusal } = await renderRefusal();
+
+    const posts = fetchStub.callsTo("/api/swap-checks");
+    expect(posts).toHaveLength(1);
+    const [post] = posts;
+    expect(post?.method).toBe("POST");
+    expect(JSON.parse(post?.body ?? "null")).toEqual({ giveShiftId: GIVE_PICK, takeShiftId: FCC_TAKE });
+    expect(post?.headers.get("X-Employee-Number")).toBe("104417");
+    expect(post?.headers.get("X-Roles")).toBe("operator");
+
+    expect(within(refusal).getByRole("heading", { level: 2, name: "Swap refused" })).toBeTruthy();
+    const reason = outsidePilotReason();
+    expect(refusal.textContent).toContain(`${reason.shiftId} is in ${reason.unit},`);
+    // The picker is replaced by the refusal.
+    expect(screen.queryByRole("form", { name: "Choose the shifts to swap" })).toBeNull();
+  });
+});
+
+describe("pilot notices (C11)", () => {
+  test("the picker view contains the roster export instant and every pilot caveat", async () => {
+    const { container } = await renderPickerFor104417();
+    for (const text of NOTICE_TEXT) {
+      expect(container.textContent).toContain(text);
+    }
+  });
+
+  test("the refusal view contains the same notices, names the FCC shift and has no section-sign text", async () => {
+    const { container } = await renderRefusal();
+    const notices = screen.getByRole("complementary", { name: "Pilot notices" });
+    for (const text of NOTICE_TEXT) {
+      expect(notices.textContent).toContain(text);
+    }
+    expect(container.textContent).toContain(FCC_TAKE);
+    // The page must not cite a section of the rules; any section sign is a leak.
+    expect(container.textContent).not.toContain(SECTION_SIGN);
+  });
+});
+
+describe("accessibility (C14)", () => {
+  test("the picker with the switcher shown and a selection made has no axe-core WCAG A/AA violations", async () => {
+    const { container } = await renderPickerFor104417();
+    pick(GIVE_PICK, FCC_TAKE);
+    expect(selectElement("Act as (development only)").value).toBe("104417");
+    expect(selectElement("Shift to give").value).toBe(GIVE_PICK);
+    expect(selectElement("Shift to take").value).toBe(FCC_TAKE);
+    expect(await wcagViolations(container)).toEqual([]);
+  });
+
+  test("the refusal view has no axe-core WCAG A/AA violations", async () => {
+    const { container } = await renderRefusal();
+    expect(await wcagViolations(container)).toEqual([]);
+  });
+});
+
+describe("owner names on take options (C18)", () => {
+  const HELD_BY = " held by ";
+
+  test("the take options for CDU-CON1-0319-N and FCC-CON1-0318-D name Luis Fontenot and Nadia Trahan", async () => {
+    await renderPickerFor104417();
+    const takeSelect = selectElement("Shift to take");
+
+    const luis = within(takeSelect).getByRole("option", { name: /CDU-CON1-0319-N.*Luis Fontenot/ });
+    expect(luis.getAttribute("value")).toBe("CDU-CON1-0319-N");
+
+    const nadia = within(takeSelect).getByRole("option", { name: /FCC-CON1-0318-D.*Nadia Trahan/ });
+    expect(nadia.getAttribute("value")).toBe("FCC-CON1-0318-D");
+  });
+
+  test("every take option's accessible name contains the owner name from its fixture entry", async () => {
+    await renderPickerFor104417();
+    const takeSelect = selectElement("Shift to take");
+    expect(fixtures.shifts104417.take.length).toBeGreaterThan(0);
+
+    for (const entry of fixtures.shifts104417.take) {
+      const matches = within(takeSelect).getAllByRole("option", {
+        name: (accessibleName) =>
+          accessibleName.includes(entry.shiftId) &&
+          entry.ownerName !== null &&
+          accessibleName.includes(entry.ownerName),
+      });
+      expect(matches.map((option) => option.getAttribute("value"))).toEqual([entry.shiftId]);
+    }
+  });
+
+  test("every take option says who holds it, and no give option does", async () => {
+    await renderPickerFor104417();
+    const heldBy = { name: (accessibleName: string) => accessibleName.includes(HELD_BY) };
+
+    const takeHeld = within(selectElement("Shift to take")).getAllByRole("option", heldBy);
+    expect(takeHeld).toHaveLength(fixtures.shifts104417.take.length);
+
+    const giveOptions = within(selectElement("Shift to give")).getAllByRole("option");
+    expect(giveOptions).toHaveLength(fixtures.shifts104417.give.length + 1);
+    expect(within(selectElement("Shift to give")).queryAllByRole("option", heldBy)).toEqual([]);
+    const owners = fixtures.shifts104417.take.flatMap((entry) => (entry.ownerName === null ? [] : [entry.ownerName]));
+    for (const owner of new Set(owners)) {
+      expect(giveOptions.some((option) => (option.textContent ?? "").includes(owner))).toBe(false);
+    }
+  });
+
+  test("the picker showing owner names has no axe-core WCAG A/AA violations", async () => {
+    const { container } = await renderPickerFor104417();
+    expect(
+      within(selectElement("Shift to take")).getByRole("option", { name: /CDU-CON1-0319-N.*Luis Fontenot/ }),
+    ).toBeTruthy();
+    expect(await wcagViolations(container)).toEqual([]);
+  });
+});
+
+describe("take option whose holder is not in the roster", () => {
+  const NO_HOLDER_TAKE = FCC_TAKE;
+
+  /**
+   * Serves the fixtures, except that 104417's shifts response has the `ownerName` of the take entry
+   * `shiftId` set to null. Every other response, including the dev users, is the fixture's.
+   */
+  function installFixtureFetchWithNullOwner(shiftId: string) {
+    const fixtureFetch = globalThis.fetch;
+    const body = structuredClone(fixtures.shifts104417);
+    const entry = body.take.find((candidate) => candidate.shiftId === shiftId);
+    if (entry === undefined) {
+      throw new Error(`shifts-104417.json has no take entry ${shiftId}.`);
+    }
+    entry.ownerName = null;
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const employee = new Headers(init?.headers).get("X-Employee-Number");
+      if (new URL(url, "http://localhost").pathname === "/api/shifts" && employee === "104417") {
+        return Promise.resolve(
+          new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }),
+        );
+      }
+      return fixtureFetch(input, init);
+    });
+  }
+
+  test("is shown as 'holder not in roster' with no axe-core WCAG A/AA violations, and the other options keep their owners", async () => {
+    installFixtureFetch();
+    installFixtureFetchWithNullOwner(NO_HOLDER_TAKE);
+    const view = render(<App />);
+    await waitFor(() => {
+      expect(within(selectElement("Act as (development only)")).getAllByRole("option")).toHaveLength(
+        fixtures.devUsers.users.length + 1,
+      );
+    });
+    await chooseUser("104417");
+    const takeSelect = selectElement("Shift to take");
+
+    const option = within(takeSelect).getByRole("option", {
+      name: new RegExp(`${NO_HOLDER_TAKE}.*holder not in roster`),
+    });
+    expect(option.getAttribute("value")).toBe(NO_HOLDER_TAKE);
+    const text = option.textContent ?? "";
+    expect(text).not.toContain("held by");
+    expect(text).not.toContain("null");
+
+    const others = fixtures.shifts104417.take.filter((entry) => entry.shiftId !== NO_HOLDER_TAKE);
+    expect(others.length).toBeGreaterThan(0);
+    for (const entry of others) {
+      const matches = within(takeSelect).getAllByRole("option", {
+        name: (accessibleName) =>
+          accessibleName.includes(entry.shiftId) &&
+          entry.ownerName !== null &&
+          accessibleName.includes(`held by ${entry.ownerName}`),
+      });
+      expect(matches.map((match) => match.getAttribute("value"))).toEqual([entry.shiftId]);
+    }
+
+    expect(await wcagViolations(view.container)).toEqual([]);
+  });
+});
+
+describe("refusal from the fixture file (C15)", () => {
+  test("the FCC shift the tests pick is the step-8 fixture's refused shift", () => {
+    expect(FCC_TAKE).toBe(outsidePilotReason().shiftId);
+  });
+
+  test("the refusal list has one item per reason in step-8.json", async () => {
+    const { refusal } = await renderRefusal();
+    expect(within(refusal).getAllByRole("listitem")).toHaveLength(fixtures.step8.reasons.length);
+  });
+});
+
+const STEP_1_PICK = { giveShiftId: GIVE_PICK, takeShiftId: "CDU-CON1-0319-N" };
+
+describe("the interim 501 is gone", () => {
+  test("a 501 is an unexpected status, shown on the picker like any other", async () => {
+    await renderWithUsersLoaded({
+      swapCheck: (_call, requested) =>
+        requested?.giveShiftId === STEP_1_PICK.giveShiftId && requested.takeShiftId === STEP_1_PICK.takeShiftId
+          ? { status: 501, body: { kind: "not-evaluated" } }
+          : undefined,
+    });
+    await chooseUser("104417");
+    pick(STEP_1_PICK.giveShiftId, STEP_1_PICK.takeShiftId);
+    checkSwap();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("Could not check the swap. The server answered with an unexpected status (501).");
+    expect(screen.queryByRole("region", { name: "Not evaluated" })).toBeNull();
+    expect(screen.getByRole("form", { name: "Choose the shifts to swap" })).toBeTruthy();
+  });
+});
+
+describe("approved without review (step-1.json)", () => {
+  async function renderApproved() {
+    const rendered = await renderWithUsersLoaded({
+      swapCheck: (_call, requested) =>
+        requested?.giveShiftId === STEP_1_PICK.giveShiftId && requested.takeShiftId === STEP_1_PICK.takeShiftId
+          ? { status: 200, body: fixtures.step1 }
+          : undefined,
+    });
+    await chooseUser("104417");
+    pick(STEP_1_PICK.giveShiftId, STEP_1_PICK.takeShiftId);
+    checkSwap();
+    const section = await screen.findByRole("region", { name: "Approved without review" });
+    return { ...rendered, section };
+  }
+
+  test("shows the guidance, the notices and Choose again as the only control", async () => {
+    const { section } = await renderApproved();
+
+    expect(within(section).getByRole("heading", { level: 2, name: "Approved without review" })).toBeTruthy();
+    expect(section.textContent).toContain(fixtures.step1.guidance);
+    const notices = screen.getByRole("complementary", { name: "Pilot notices" });
+    for (const text of NOTICE_TEXT) {
+      expect(notices.textContent).toContain(text);
+    }
+    expect(within(section).getAllByRole("button").map((button) => button.textContent)).toEqual(["Choose again"]);
+  });
+
+  test("has no axe-core WCAG A/AA violations", async () => {
+    const { container } = await renderApproved();
+    expect(await wcagViolations(container)).toEqual([]);
+  });
+});
+
+describe("focus on view changes", () => {
+  test("focus moves to the refusal heading, and Choose again returns focus to the Shift to give select", async () => {
+    const { refusal } = await renderRefusal();
+    const heading = within(refusal).getByRole("heading", { level: 2, name: "Swap refused" });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(heading);
+    });
+
+    fireEvent.click(within(refusal).getByRole("button", { name: "Choose again" }));
+
+    await screen.findByRole("form", { name: "Choose the shifts to swap" });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(selectElement("Shift to give"));
+    });
+  });
+});

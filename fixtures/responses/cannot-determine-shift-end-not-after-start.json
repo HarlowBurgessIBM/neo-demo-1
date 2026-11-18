@@ -1,0 +1,16 @@
+{
+  "outcome": "cannot-determine",
+  "exportedAt": "2027-03-07T08:00:00Z",
+  "exportedAtUtcMinute": "2027-03-07T08:00Z",
+  "exportedAtSiteLocal": "2027-03-07T02:00",
+  "siteTimeZone": "America/Chicago",
+  "reasons": [
+    {
+      "code": "invalid-export-field",
+      "field": "shifts.end",
+      "party": "take-shift-owner",
+      "shiftId": "CDU-CON1-0301-N",
+      "problem": "not-after-start"
+    }
+  ]
+}

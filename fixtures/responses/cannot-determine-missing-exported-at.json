@@ -1,0 +1,14 @@
+{
+  "outcome": "cannot-determine",
+  "exportedAt": null,
+  "exportedAtUtcMinute": null,
+  "exportedAtSiteLocal": null,
+  "siteTimeZone": null,
+  "reasons": [
+    {
+      "code": "invalid-export-field",
+      "field": "exportedAt",
+      "problem": "missing"
+    }
+  ]
+}
