@@ -174,6 +174,10 @@ function resolveShift(entry: ShiftSetEntry, context: Context): Resolved | undefi
   if (startResolution.kind !== "ok" || endResolution.kind !== "ok") {
     return undefined;
   }
+  // A shift that ends at or before it starts is unusable data, as in the determinability gate.
+  if (endResolution.epochMs <= startResolution.epochMs) {
+    return undefined;
+  }
   return {
     kind: "in-coverage",
     shift: {

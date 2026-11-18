@@ -77,6 +77,13 @@ export type CannotDetermineReason =
       problem: "missing" | "malformed";
     }
   | {
+      code: "invalid-export-field";
+      field: "shifts.end";
+      party: Party;
+      shiftId: string;
+      problem: "not-after-start";
+    }
+  | {
       code: "coverage-mismatch";
       field: "coverage.from" | "coverage.to";
       actual: string;
@@ -163,6 +170,7 @@ export function assessDeterminability(
   const qualificationEntryReasons: CannotDetermineReason[] = [];
   const malformedReasons: CannotDetermineReason[] = [];
   const shiftFieldReasons: CannotDetermineReason[] = [];
+  const shiftEndReasons: CannotDetermineReason[] = [];
   const horizonReasons: CannotDetermineReason[] = [];
   const localTimeReasons: CannotDetermineReason[] = [];
 
@@ -426,6 +434,17 @@ export function assessDeterminability(
 
   const shiftSet = buildShiftSet(shifts, [giveShift, takeShift]);
 
+  // A shift in the set belongs to the give-shift owner when its owner matches the give shift's.
+  const partyOf = (shift: PlainObject): Party => {
+    const ownerNumber = shift["employeeNumber"];
+    if (typeof ownerNumber === "string") {
+      return ownerNumber === giveShift?.["employeeNumber"]
+        ? "give-shift-owner"
+        : "take-shift-owner";
+    }
+    return shift === giveShift ? "give-shift-owner" : "take-shift-owner";
+  };
+
   // malformed times
   for (const { shiftId, shift } of shiftSet) {
     for (const field of TIME_FIELDS) {
@@ -447,12 +466,7 @@ export function assessDeterminability(
         continue;
       }
     }
-    const ownerNumber = shift["employeeNumber"];
-    let party: Party = shift === giveShift ? "give-shift-owner" : "take-shift-owner";
-    if (typeof ownerNumber === "string") {
-      party =
-        ownerNumber === giveShift?.["employeeNumber"] ? "give-shift-owner" : "take-shift-owner";
-    }
+    const party = partyOf(shift);
     for (const field of ["unit", "role"] as const) {
       const value = shift[field];
       if (typeof value !== "string") {
@@ -514,6 +528,27 @@ export function assessDeterminability(
           localTimeReasons.push({ code: "ambiguous-local-time", shiftId, field, value });
         }
       }
+
+      // An end that resolves to an instant at or before the start's is an inconsistent field.
+      // Only compared when both resolve to a single instant; other cases keep their reasons.
+      const end = shift["end"];
+      if (isLocalWallTime(start) && isLocalWallTime(end)) {
+        const startResolution = resolveLocalTime(start, zone);
+        const endResolution = resolveLocalTime(end, zone);
+        if (
+          startResolution.kind === "ok" &&
+          endResolution.kind === "ok" &&
+          endResolution.epochMs <= startResolution.epochMs
+        ) {
+          shiftEndReasons.push({
+            code: "invalid-export-field",
+            field: "shifts.end",
+            party: partyOf(shift),
+            shiftId,
+            problem: "not-after-start",
+          });
+        }
+      }
     }
   }
 
@@ -530,6 +565,7 @@ export function assessDeterminability(
     ...qualificationEntryReasons,
     ...malformedReasons,
     ...shiftFieldReasons,
+    ...shiftEndReasons,
     ...horizonReasons,
     ...localTimeReasons,
   ];
