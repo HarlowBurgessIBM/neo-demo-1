@@ -176,7 +176,7 @@ export const STEP_3: SwapPick = { caller: "104417", give: "CDU-CON1-0310-D", tak
 export const STEP_4: SwapPick = { caller: "104417", give: "CDU-CON1-0310-D", take: "HCU-CON1-0314-D" };
 /** Step 6: 107903 gives HCU-CON1-0308-D and takes HCU-CON1-0317-D. */
 export const STEP_6: SwapPick = { caller: "107903", give: "HCU-CON1-0308-D", take: "HCU-CON1-0317-D" };
-/** Step 5: 103078 gives CDU-FLD1-0309-D and takes CDU-FLD1-0318-D. */
+/** Step 5: 103078 gives CDU-FLD1-0309-D and takes CDU-FLD1-0318-D. */
 export const STEP_5: SwapPick = { caller: "103078", give: "CDU-FLD1-0309-D", take: "CDU-FLD1-0318-D" };
 
 /** The sample roster with `added` appended to its shifts. Nothing in the sample is changed. */
