@@ -5,7 +5,7 @@ import { exportStamp, type ExportStamp } from "./roster";
 export const GUIDANCE = `This swap does not meet VE-HSSE-STD-014 § 3 and cannot be approved (§ 4.4). Exceptions to § 3 are granted only through the fatigue exception procedure, ${EXCEPTION_PROCEDURE}, which is separate from the swap process.`;
 
 /**
- * The swap fails § 3.1 or § 3.3 for at least one employee. It is an outcome, not a refusal.
+ * The swap fails §§ 3.1–3.3 for at least one employee. It is an outcome, not a refusal.
  * `employees` is the rules output as produced: names and findings, never an employee number.
  */
 export interface CannotBeApprovedBody extends ExportStamp {

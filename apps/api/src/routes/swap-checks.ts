@@ -30,8 +30,8 @@ export interface SwapCheckRefusal {
 }
 
 /**
- * The 501 interim answer: no § 3.1 or § 3.3 failure was found, and § 3.2 (#7) and § 4.2 (#8) are
- * not yet evaluated. Carries no outcome and no findings.
+ * The 501 interim answer: no § 3.1, § 3.2 or § 3.3 failure was found, and § 4.2 (#8) is not yet
+ * evaluated. Carries no outcome and no findings.
  */
 export interface NotEvaluated {
   kind: "not-evaluated";
@@ -56,16 +56,16 @@ function isOutsidePilot(unit: unknown): unit is string {
   return typeof unit === "string" && !PILOT_UNITS.some((pilotUnit) => pilotUnit === unit);
 }
 
-/** True when at least one of the two employees has a § 3.1 or § 3.3 finding. */
+/** True when at least one of the two employees has a § 3.1, § 3.2 or § 3.3 finding. */
 function hasFinding(employees: readonly EmployeeEvaluation[]): boolean {
   return employees.some((employee) => employee.findings.length > 0);
 }
 
 /**
  * Seam for swap evaluation. Picks that pass the refusal checks and the determinability gate are
- * evaluated against § 3.1 and § 3.3: a failure is a 200 `cannot-be-approved`. Otherwise the
- * interim 501 `not-evaluated` stays, meaning no § 3.1/§ 3.3 failure found; § 3.2 (#7) and § 4.2
- * (#8) are not yet evaluated, and later tasks replace it. Nothing from the evaluation is logged.
+ * evaluated against §§ 3.1–3.3: a failure is a 200 `cannot-be-approved`. Otherwise the interim
+ * 501 `not-evaluated` stays, meaning no § 3 failure found; § 4.2 (#8) is not yet evaluated, and a
+ * later task replaces it. Nothing from the evaluation is logged.
  */
 function evaluateAndReply(
   reply: FastifyReply,

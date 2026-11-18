@@ -1,5 +1,6 @@
 // The fatigue-policy rules engine: the determinability gate, site-time arithmetic, and the
-// swap evaluation against § 3.1 (off-duty period) and § 3.3 (qualification).
+// swap evaluation against § 3.1 (off-duty period), § 3.2 (seven-day hours) and § 3.3
+// (qualification).
 // Source of the rules: docs/standards/fatigue-management-policy.md
 
 /** Identifies the policy revision a decision was evaluated against. */
@@ -34,5 +35,7 @@ export type {
   OffDutyFinding,
   OffDutyPeriod,
   QualificationFinding,
+  SevenDayHoursFinding,
+  SevenDayWindow,
   SwapEvaluation,
 } from "./swap-evaluation";

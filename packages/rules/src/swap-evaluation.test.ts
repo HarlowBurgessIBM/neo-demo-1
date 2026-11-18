@@ -6,6 +6,7 @@ import type {
   Finding,
   OffDutyFinding,
   QualificationFinding,
+  SevenDayWindow,
   SwapEvaluation,
 } from "./swap-evaluation";
 import {
@@ -65,6 +66,32 @@ function isQualification(finding: Finding): finding is QualificationFinding {
   return finding.rule === "3.3";
 }
 
+/**
+ * The 22 windows of the builder roster (2027-03-01 to 2027-03-28) for an employee whose only
+ * shift in coverage starts on `worked` and lasts `workedMinutes`. A window changed by the swap
+ * contains the date of the shift given or taken.
+ */
+function windowsForOneShift(
+  worked: string,
+  workedMinutes: number,
+  swapDates: [string, string],
+): SevenDayWindow[] {
+  const windows: SevenDayWindow[] = [];
+  for (let i = 0; i < 22; i += 1) {
+    const from = plusDays(COVERAGE_FROM, i);
+    const to = plusDays(from, 6);
+    const total = from <= worked && worked <= to ? workedMinutes : 0;
+    windows.push({
+      from,
+      to,
+      hours: Math.floor(total / 60),
+      minutes: total % 60,
+      changedBySwap: swapDates.some((date) => from <= date && date <= to),
+    });
+  }
+  return windows;
+}
+
 function offDutyFindings(employee: EmployeeEvaluation): OffDutyFinding[] {
   return employee.findings.filter(isOffDuty);
 }
@@ -102,6 +129,7 @@ describe("the evaluation result", () => {
       tookShiftId: TAKE_SHIFT_ID,
       offDutyBefore: null,
       offDutyAfter: null,
+      windows: windowsForOneShift("2027-03-11", 720, ["2027-03-10", "2027-03-11"]),
       findings: [],
     });
     expect(take).toEqual({
@@ -111,6 +139,7 @@ describe("the evaluation result", () => {
       tookShiftId: GIVE_SHIFT_ID,
       offDutyBefore: null,
       offDutyAfter: null,
+      windows: windowsForOneShift("2027-03-10", 720, ["2027-03-10", "2027-03-11"]),
       findings: [],
     });
   });
@@ -816,11 +845,12 @@ describe("ordering", () => {
 
   test("an employee's § 3.1 findings come before their § 3.3 findings, each in time order", () => {
     const [give] = evaluated(roster);
-    const summary = give.findings.map((finding) =>
-      isOffDuty(finding)
-        ? [finding.rule, finding.fromShiftId, finding.toShiftId]
-        : [finding.rule, finding.shiftId],
-    );
+    const summary = give.findings.map((finding) => {
+      if (isOffDuty(finding)) {
+        return [finding.rule, finding.fromShiftId, finding.toShiftId];
+      }
+      return finding.rule === "3.3" ? [finding.rule, finding.shiftId] : [finding.rule];
+    });
     expect(summary).toEqual([
       ["3.1", "A-S1", "A-S2"],
       ["3.1", "A-S2", "A-S3"],

@@ -1,5 +1,5 @@
-// The swap evaluation: the fatigue-policy rules (§ 3.1 off-duty period, § 3.3 qualification)
-// applied to the schedule each employee would have after the swap.
+// The swap evaluation: the fatigue-policy rules (§ 3.1 off-duty period, § 3.2 seven-day hours,
+// § 3.3 qualification) applied to the schedule each employee would have after the swap.
 // Pure: no I/O, no clock, no framework. Meant to run after `assessDeterminability` returned
 // `determinable: true`. If a fact the gate guarantees does not hold, it returns
 // `{ kind: "not-evaluable" }` rather than throw. Output carries no employee number.
@@ -14,7 +14,14 @@ import {
   type PlainObject,
   type ShiftSetEntry,
 } from "./roster-records";
-import { elapsedMinutes, isLocalDate, isLocalWallTime, isValidTimeZone, resolveLocalTime } from "./site-time";
+import {
+  addDays,
+  elapsedMinutes,
+  isLocalDate,
+  isLocalWallTime,
+  isValidTimeZone,
+  resolveLocalTime,
+} from "./site-time";
 
 /** The procedure a supervisor follows to approve a swap the rules do not allow. */
 export const EXCEPTION_PROCEDURE = "VE-HSSE-PRC-021";
@@ -22,6 +29,12 @@ export const EXCEPTION_PROCEDURE = "VE-HSSE-PRC-021";
 /** § 3.1: the shortest off-duty period between two shifts, in hours. */
 const MINIMUM_OFF_DUTY_HOURS = 11;
 const MINIMUM_OFF_DUTY_MINUTES = MINIMUM_OFF_DUTY_HOURS * 60;
+
+/** § 3.2: the most scheduled hours in any seven consecutive site-local dates. */
+const MAXIMUM_WINDOW_HOURS = 72;
+const MAXIMUM_WINDOW_MINUTES = MAXIMUM_WINDOW_HOURS * 60;
+/** The number of consecutive site-local dates in a § 3.2 window. */
+const WINDOW_DAYS = 7;
 
 /** The off-duty period between two consecutive shifts. */
 export interface OffDutyPeriod {
@@ -45,6 +58,35 @@ export interface OffDutyFinding extends OffDutyPeriod {
   overlap?: true;
 }
 
+/**
+ * The scheduled hours in seven consecutive site-local dates, `from` to `to` inclusive. A shift's
+ * elapsed time counts wholly on the date it starts, so the 13 Mar night shift is 11 h.
+ */
+export interface SevenDayWindow {
+  /** First site-local date, YYYY-MM-DD. */
+  from: string;
+  /** Last site-local date, inclusive, YYYY-MM-DD. */
+  to: string;
+  hours: number;
+  /** 0 to 59. */
+  minutes: number;
+  /** True if the window contains the start date of the shift the employee gave or took. */
+  changedBySwap: boolean;
+}
+
+/** § 3.2: more than 72 hours in one seven-day window. Exactly 72 hours passes. */
+export interface SevenDayHoursFinding {
+  rule: "3.2";
+  code: "seven-day-hours-over-maximum";
+  changedBySwap: boolean;
+  maximumHours: 72;
+  from: string;
+  to: string;
+  hours: number;
+  /** 0 to 59. */
+  minutes: number;
+}
+
 export interface QualificationFinding {
   rule: "3.3";
   code: "qualification-expired" | "no-qualification-for-unit-and-role";
@@ -58,7 +100,7 @@ export interface QualificationFinding {
   validThrough: string | null;
 }
 
-export type Finding = OffDutyFinding | QualificationFinding;
+export type Finding = OffDutyFinding | SevenDayHoursFinding | QualificationFinding;
 
 export interface EmployeeEvaluation {
   party: Party;
@@ -67,6 +109,8 @@ export interface EmployeeEvaluation {
   tookShiftId: string;
   offDutyBefore: OffDutyPeriod | null;
   offDutyAfter: OffDutyPeriod | null;
+  /** Every seven-date window fully inside coverage, in date order; empty if coverage is shorter. */
+  windows: SevenDayWindow[];
   findings: Finding[];
 }
 
@@ -378,6 +422,57 @@ function evaluateEmployee(
     }
   }
 
+  // § 3.2: a shift's elapsed minutes count wholly on its site-local start date.
+  const minutesByDate = new Map<string, number>();
+  for (const shift of schedule) {
+    const minutes = elapsedMinutes(shift.start, shift.end, context.zone);
+    if (minutes === undefined) {
+      return undefined;
+    }
+    const date = shift.start.slice(0, 10);
+    minutesByDate.set(date, (minutesByDate.get(date) ?? 0) + minutes);
+  }
+  const givenDate = given.start.slice(0, 10);
+  const takenDate = taken.start.slice(0, 10);
+  const windows: SevenDayWindow[] = [];
+  const sevenDayFindings: SevenDayHoursFinding[] = [];
+  let from: string | undefined = context.coverage.from;
+  for (;;) {
+    const to = addDays(from, WINDOW_DAYS - 1);
+    if (to === undefined || to > context.coverage.to) {
+      break;
+    }
+    let total = 0;
+    for (let offset = 0; offset < WINDOW_DAYS; offset += 1) {
+      const date = addDays(from, offset);
+      if (date === undefined) {
+        return undefined;
+      }
+      total += minutesByDate.get(date) ?? 0;
+    }
+    const hours = Math.floor(total / 60);
+    const minutes = total % 60;
+    const changedBySwap =
+      (from <= givenDate && givenDate <= to) || (from <= takenDate && takenDate <= to);
+    windows.push({ from, to, hours, minutes, changedBySwap });
+    if (total > MAXIMUM_WINDOW_MINUTES) {
+      sevenDayFindings.push({
+        rule: "3.2",
+        code: "seven-day-hours-over-maximum",
+        changedBySwap,
+        maximumHours: MAXIMUM_WINDOW_HOURS,
+        from,
+        to,
+        hours,
+        minutes,
+      });
+    }
+    from = addDays(from, 1);
+    if (from === undefined) {
+      return undefined;
+    }
+  }
+
   const qualificationFindings: QualificationFinding[] = [];
   for (const shift of schedule) {
     const finding = checkShiftQualification(shift, qualifications, shift === taken);
@@ -394,12 +489,13 @@ function evaluateEmployee(
     tookShiftId: taken.shiftId,
     offDutyBefore: rests[takenIndex - 1] ?? null,
     offDutyAfter: rests[takenIndex] ?? null,
-    findings: [...offDutyFindings, ...qualificationFindings],
+    windows,
+    findings: [...offDutyFindings, ...sevenDayFindings, ...qualificationFindings],
   };
 }
 
 /**
- * Applies the swap and checks each employee's resulting schedule against § 3.1 and § 3.3.
+ * Applies the swap and checks each employee's resulting schedule against §§ 3.1, 3.2 and 3.3.
  * Never throws and never reads a clock.
  */
 export function evaluateSwap(
