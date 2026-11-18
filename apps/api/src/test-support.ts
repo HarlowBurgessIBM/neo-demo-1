@@ -176,6 +176,8 @@ export const STEP_3: SwapPick = { caller: "104417", give: "CDU-CON1-0310-D", tak
 export const STEP_4: SwapPick = { caller: "104417", give: "CDU-CON1-0310-D", take: "HCU-CON1-0314-D" };
 /** Step 6: 107903 gives HCU-CON1-0308-D and takes HCU-CON1-0317-D. */
 export const STEP_6: SwapPick = { caller: "107903", give: "HCU-CON1-0308-D", take: "HCU-CON1-0317-D" };
+/** Step 5: 103078 gives CDU-FLD1-0309-D and takes CDU-FLD1-0318-D. */
+export const STEP_5: SwapPick = { caller: "103078", give: "CDU-FLD1-0309-D", take: "CDU-FLD1-0318-D" };
 
 /** The sample roster with `added` appended to its shifts. Nothing in the sample is changed. */
 function sampleRosterWith(...added: RosterShift[]): Roster {
@@ -231,6 +233,28 @@ export function unchangedShiftQualificationRoster(
     end: `2027-03-${day}T17:00`,
     employeeNumber: "107903",
   });
+}
+
+/**
+ * For the Step 3 pick: the sample roster with one shift of the take-shift owner (102286) changed
+ * so its `end` equals its `start`. The shift starts within coverage and is not one of the swapped
+ * shifts. Returns the roster and the id of that shift.
+ */
+export function shiftEndNotAfterStartRoster(): { roster: Roster; shiftId: string } {
+  const roster = readSampleRoster();
+  const shift = roster.shifts.find(
+    (candidate) =>
+      candidate.employeeNumber === "102286" &&
+      candidate.shiftId !== STEP_3.give &&
+      candidate.shiftId !== STEP_3.take &&
+      candidate.start.slice(0, 10) >= roster.coverage.from &&
+      candidate.start.slice(0, 10) <= roster.coverage.to,
+  );
+  if (shift === undefined) {
+    throw new Error("sample roster has no unswapped in-coverage shift for the take-shift owner");
+  }
+  shift.end = shift.start;
+  return { roster, shiftId: shift.shiftId };
 }
 
 /** The two identity headers the site access gateway sets. */

@@ -8,6 +8,7 @@ import {
   STEP_1,
   STEP_3,
   STEP_4,
+  STEP_5,
   STEP_6,
   type SwapPick,
 } from "./test-support";
@@ -42,6 +43,7 @@ describe("criterion 16: the sample guard", () => {
     ["Step 1", STEP_1],
     ["Step 3", STEP_3],
     ["Step 4", STEP_4],
+    ["Step 5", STEP_5],
     ["Step 6", STEP_6],
   ])("%s: the sample pick has no invalid-export-field reason, so the gate passes it", (_label, pick) => {
     const result = assessDeterminability(readSampleRosterRaw(), {
@@ -52,5 +54,19 @@ describe("criterion 16: the sample guard", () => {
     const codes = result.determinable ? [] : result.reasons.map((reason) => reason.code);
     expect(codes).not.toContain("invalid-export-field");
     expect(result.determinable).toBe(true);
+  });
+
+  test("no Step 1, 3, 4, 5 or 6 pick yields a shifts.end reason on the sample", () => {
+    for (const pick of [STEP_1, STEP_3, STEP_4, STEP_5, STEP_6]) {
+      const result = assessDeterminability(readSampleRosterRaw(), {
+        now: fixedNow(SAMPLE_NOW_ISO)(),
+        giveShiftId: pick.give,
+        takeShiftId: pick.take,
+      });
+      const fields = result.determinable
+        ? []
+        : result.reasons.flatMap((reason) => ("field" in reason ? [reason.field] : []));
+      expect(fields).not.toContain("shifts.end");
+    }
   });
 });

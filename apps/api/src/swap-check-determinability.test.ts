@@ -2,7 +2,16 @@ import { assessDeterminability } from "@shiftswap/rules";
 import type { LightMyRequestResponse } from "fastify";
 import { describe, expect, test } from "vitest";
 import { buildApp } from "./app";
-import { fixedNow, headersFor, readFixture, readSampleRoster, readSampleRosterRaw } from "./test-support";
+import {
+  fixedNow,
+  headersFor,
+  readFixture,
+  readSampleRoster,
+  readSampleRosterRaw,
+  SAMPLE_NOW_ISO,
+  shiftEndNotAfterStartRoster,
+  STEP_3,
+} from "./test-support";
 
 // The determinability gate through POST /api/swap-checks (issue #5). Fixtures are the shared
 // response fixtures in fixtures/responses, the same files the web tests read (criterion 18).
@@ -352,6 +361,52 @@ describe("criteria 7, 15 and 17: an unusable export is an outcome, never a serve
     expect(body["reasons"]).toEqual([
       { code: "coverage-mismatch", field: "coverage.from", actual: "2027-03-02", expected: "2027-03-01" },
     ]);
+  });
+});
+
+describe("criteria 3 and 17: a shift that ends at or before it starts", () => {
+  test("Step 3 with an unswapped take-owner shift ending when it starts gives cannot-determine with one reason", async () => {
+    const { roster, shiftId } = shiftEndNotAfterStartRoster();
+    const response = await swapCheck(STEP_3, SAMPLE_NOW_ISO, roster);
+    const body = expectCannotDetermine(response);
+    expect(body["reasons"]).toEqual([
+      {
+        code: "invalid-export-field",
+        field: "shifts.end",
+        party: "take-shift-owner",
+        shiftId,
+        problem: "not-after-start",
+      },
+    ]);
+  });
+
+  test("the body equals the cannot-determine-shift-end-not-after-start fixture, with no name or employee number", async () => {
+    const { roster } = shiftEndNotAfterStartRoster();
+    const response = await swapCheck(STEP_3, SAMPLE_NOW_ISO, roster);
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(readFixture("cannot-determine-shift-end-not-after-start.json"));
+    expectCannotDetermine(response);
+  });
+
+  test("an outside-pilot-units refusal on the same roster is still 422, ahead of the gate", async () => {
+    const { roster } = shiftEndNotAfterStartRoster();
+    // Luis owns the FCC shift, so the shift that ends when it starts is still in the shift set.
+    roster.shifts.push({
+      shiftId: "FCC-CON1-0320-D",
+      unit: "FCC",
+      role: "CONSOLE",
+      start: "2027-03-20T06:00",
+      end: "2027-03-20T18:00",
+      employeeNumber: LUIS,
+    });
+    const response = await swapCheck({ caller: MAYA, give: STEP_3.give, take: "FCC-CON1-0320-D" }, SAMPLE_NOW_ISO, roster);
+    expect(response.statusCode).toBe(422);
+    const body = asRecord(response.json(), "body");
+    expect(body).toEqual({
+      kind: "refused",
+      reasons: [{ code: "outside-pilot-units", shiftId: "FCC-CON1-0320-D", unit: "FCC" }],
+    });
+    expect(body).not.toHaveProperty("outcome");
   });
 });
 
