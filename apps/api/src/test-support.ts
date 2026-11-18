@@ -304,3 +304,22 @@ export function shiftEndNotAfterStartRoster(): { roster: Roster; shiftId: string
 export function headersFor(employeeNumber: string, roles = "operator"): Record<string, string> {
   return { "x-employee-number": employeeNumber, "x-roles": roles };
 }
+
+/**
+ * Every ordered pick in the sample roster of one own shift and one other-employee shift: `give`
+ * is a shift, `caller` is its owner, and `take` is any shift whose owner is someone else. Shifts
+ * are walked in roster order, `give` in the outer loop and `take` in the inner one, so the order
+ * is the same on every call.
+ */
+export function sampleSweepPicks(): SwapPick[] {
+  const { shifts } = readSampleRoster();
+  const picks: SwapPick[] = [];
+  for (const give of shifts) {
+    for (const take of shifts) {
+      if (take.employeeNumber !== give.employeeNumber) {
+        picks.push({ caller: give.employeeNumber, give: give.shiftId, take: take.shiftId });
+      }
+    }
+  }
+  return picks;
+}
