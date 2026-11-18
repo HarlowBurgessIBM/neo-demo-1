@@ -1312,10 +1312,29 @@ describe("§ 3.2 seven-day hours", () => {
   });
 
   describe("changedBySwap on a window", () => {
-    function swapRoster(givenDate: string, takenDate: string): RosterFixture {
+    /** Where in its start date a shift starts, and how long it lasts. */
+    interface Shape {
+      minuteOfDay: number;
+      minutes: number;
+    }
+    const DAY: Shape = { minuteOfDay: 6 * 60, minutes: 720 };
+    /** 18:00 to 06:00 the next date. */
+    const NIGHT: Shape = { minuteOfDay: 18 * 60, minutes: 720 };
+
+    function walls(date: string, shape: Shape): [string, string] {
+      const start = wallPlus(`${date}T00:00`, shape.minuteOfDay);
+      return [start, wallPlus(start, shape.minutes)];
+    }
+
+    function swapRoster(
+      givenDate: string,
+      takenDate: string,
+      givenShape: Shape = DAY,
+      takenShape: Shape = DAY,
+    ): RosterFixture {
       return rosterOf([
-        makeShift(GIVE_SHIFT_ID, GIVE_OWNER, `${givenDate}T06:00`, `${givenDate}T18:00`),
-        makeShift(TAKE_SHIFT_ID, TAKE_OWNER, `${takenDate}T06:00`, `${takenDate}T18:00`),
+        makeShift(GIVE_SHIFT_ID, GIVE_OWNER, ...walls(givenDate, givenShape)),
+        makeShift(TAKE_SHIFT_ID, TAKE_OWNER, ...walls(takenDate, takenShape)),
       ]);
     }
 
@@ -1342,6 +1361,32 @@ describe("§ 3.2 seven-day hours", () => {
       }
     });
 
+    test.each([
+      ["given", NIGHT, DAY],
+      ["taken", DAY, NIGHT],
+    ])(
+      "a %s night shift that starts on a window's last date and ends on the next does not change the windows starting the next date",
+      (_which, givenShape, takenShape) => {
+        // The night shift starts 10 Mar and ends 11 Mar; the other swapped shift is a day shift on 20 Mar.
+        const nightOnGiven = givenShape === NIGHT;
+        const givenDate = nightOnGiven ? "2027-03-10" : "2027-03-20";
+        const takenDate = nightOnGiven ? "2027-03-20" : "2027-03-10";
+        expect(walls("2027-03-10", NIGHT)[1].slice(0, 10)).toBe("2027-03-11");
+        // Windows starting 4 to 10 Mar hold 10 Mar; those starting 14 to 20 Mar hold 20 Mar.
+        const changedStarts = [4, 5, 6, 7, 8, 9, 10, 14, 15, 16, 17, 18, 19, 20].map((day) =>
+          plusDays("2027-03-01", day - 1),
+        );
+        for (const employee of evaluated(swapRoster(givenDate, takenDate, givenShape, takenShape))) {
+          expect(employee.windows).toHaveLength(22);
+          // The window starting 11 Mar holds the night shift's end, not its start.
+          expect(windowStarting(employee, "2027-03-11")?.changedBySwap).toBe(false);
+          for (const window of employee.windows) {
+            expect(window.changedBySwap).toBe(changedStarts.includes(window.from));
+          }
+        }
+      },
+    );
+
     test("property: changedBySwap is (from ≤ g ≤ to) or (from ≤ t ≤ to) for the dates g, t of the shifts given and taken", () => {
       const offset = fc.integer({ min: 0, max: 27 });
       fc.assert(
@@ -1355,6 +1400,41 @@ describe("§ 3.2 seven-day hours", () => {
             }
           }
         }),
+        runs,
+      );
+    });
+
+    test("property: it is keyed on the start date, whatever time the shifts start and however long they last", () => {
+      // A shift that starts or ends in the skipped hour of 14 Mar 02:00 to 03:00 is not evaluable.
+      const inSkippedHour = (wall: string): boolean =>
+        wall >= "2027-03-14T02:00" && wall < "2027-03-14T03:00";
+      const usable = (date: string, shape: Shape): boolean =>
+        walls(date, shape).every((wall) => !inSkippedHour(wall));
+      const offset = fc.integer({ min: 0, max: 27 });
+      const shape = fc.record({
+        minuteOfDay: fc.integer({ min: 0, max: 24 * 60 - 1 }),
+        minutes: fc.integer({ min: 1, max: 36 * 60 }),
+      });
+      fc.assert(
+        fc.property(
+          fc
+            .record({ givenOffset: offset, givenShape: shape, takenOffset: offset, takenShape: shape })
+            .filter(
+              ({ givenOffset, givenShape, takenOffset, takenShape }) =>
+                usable(plusDays(COVERAGE_FROM, givenOffset), givenShape) &&
+                usable(plusDays(COVERAGE_FROM, takenOffset), takenShape),
+            ),
+          ({ givenOffset, givenShape, takenOffset, takenShape }) => {
+            const g = plusDays(COVERAGE_FROM, givenOffset);
+            const t = plusDays(COVERAGE_FROM, takenOffset);
+            for (const employee of evaluated(swapRoster(g, t, givenShape, takenShape))) {
+              expect(employee.windows).toHaveLength(22);
+              for (const { from, to, changedBySwap } of employee.windows) {
+                expect(changedBySwap).toBe((from <= g && g <= to) || (from <= t && t <= to));
+              }
+            }
+          },
+        ),
         runs,
       );
     });
