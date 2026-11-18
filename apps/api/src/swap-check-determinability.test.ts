@@ -3,6 +3,7 @@ import type { LightMyRequestResponse } from "fastify";
 import { describe, expect, test } from "vitest";
 import { buildApp } from "./app";
 import {
+  ADD_3,
   fixedNow,
   headersFor,
   readFixture,
@@ -29,8 +30,6 @@ const STALE_NOW = "2027-03-08T12:00:00Z";
 
 // Step 7: Maya gives CDU-CON1-0318-N and takes Luis's CDU-CON1-0319-N.
 const STEP_7 = { caller: MAYA, give: "CDU-CON1-0318-N", take: "CDU-CON1-0319-N" };
-// ADD-3: Jerome gives CDU-FLD1-0318-D and takes Luis's CDU-CON1-0326-D, which is beyond the horizon.
-const ADD_3 = { caller: JEROME, give: "CDU-FLD1-0318-D", take: "CDU-CON1-0326-D" };
 
 const STAMP = {
   exportedAt: "2027-03-07T08:00:00Z",
@@ -152,10 +151,10 @@ describe("criterion 3: Step 7, a stale export cannot be determined", () => {
     expect(body).toMatchObject(STAMP);
   });
 
-  test("the same request at 2027-03-07T14:00Z gives 501 not-evaluated", async () => {
+  test("the same request at 2027-03-07T14:00Z gives the step-1 approved-without-review body", async () => {
     const response = await swapCheck(STEP_7, FRESH_NOW);
-    expect(response.statusCode).toBe(501);
-    expect(response.json()).toEqual({ kind: "not-evaluated" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(readFixture("step-1.json"));
   });
 });
 
@@ -242,10 +241,10 @@ describe("criterion 14: a clock before the export", () => {
     expectCannotDetermine(response);
   });
 
-  test("now equal to exportedAt gives 501 not-evaluated", async () => {
+  test("now equal to exportedAt is determinable: gives the step-1 approved-without-review body", async () => {
     const response = await swapCheck(STEP_7, "2027-03-07T08:00:00Z");
-    expect(response.statusCode).toBe(501);
-    expect(response.json()).toEqual({ kind: "not-evaluated" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(readFixture("step-1.json"));
   });
 });
 

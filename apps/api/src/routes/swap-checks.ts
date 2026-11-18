@@ -1,13 +1,8 @@
-import {
-  assessDeterminability,
-  evaluateSwap,
-  type CannotDetermineReason,
-  type EmployeeEvaluation,
-} from "@shiftswap/rules";
+import { assessDeterminability, evaluateSwap } from "@shiftswap/rules";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { callerOf, requireOperator, rosterOf } from "../identity";
-import { exportStamp, refusalShifts, type ExportStamp, type RosterSource } from "../roster";
-import { cannotBeApprovedBody } from "../swap-result";
+import { exportStamp, refusalShifts, type RosterSource } from "../roster";
+import { swapCheckAnswer, type CannotDetermineBody } from "../swap-result";
 
 /** The units in scope for the pilot. Any other unit is refused before evaluation. */
 export const PILOT_UNITS = ["CDU", "HCU"] as const;
@@ -29,23 +24,6 @@ export interface SwapCheckRefusal {
   reasons: RefusalReason[];
 }
 
-/**
- * The 501 interim answer: no § 3.1, § 3.2 or § 3.3 failure was found, and § 4.2 (#8) is not yet
- * evaluated. Carries no outcome and no findings.
- */
-export interface NotEvaluated {
-  kind: "not-evaluated";
-}
-
-/**
- * The roster cannot support an answer to this swap. It is an outcome, not a refusal: the request
- * was valid. Carries the export stamp and the reasons only, no findings and no employee data.
- */
-export interface CannotDetermineBody extends ExportStamp {
-  outcome: "cannot-determine";
-  reasons: CannotDetermineReason[];
-}
-
 export interface GiveShiftNotYours {
   kind: "forbidden";
   code: "give-shift-not-yours";
@@ -56,38 +34,31 @@ function isOutsidePilot(unit: unknown): unit is string {
   return typeof unit === "string" && !PILOT_UNITS.some((pilotUnit) => pilotUnit === unit);
 }
 
-/** True when at least one of the two employees has a § 3.1, § 3.2 or § 3.3 finding. */
-function hasFinding(employees: readonly EmployeeEvaluation[]): boolean {
-  return employees.some((employee) => employee.findings.length > 0);
-}
-
 /**
  * Seam for swap evaluation. Picks that pass the refusal checks and the determinability gate are
- * evaluated against §§ 3.1–3.3: a failure is a 200 `cannot-be-approved`. Otherwise the interim
- * 501 `not-evaluated` stays, meaning no § 3 failure found; § 4.2 (#8) is not yet evaluated, and a
- * later task replaces it. Nothing from the evaluation is logged.
+ * evaluated by `evaluate`, and the evaluation's outcome is mapped to a 200 body. The rules decide
+ * the outcome; nothing is computed here. Nothing from the evaluation is logged.
  */
 function evaluateAndReply(
   reply: FastifyReply,
+  evaluate: typeof evaluateSwap,
   raw: unknown,
   pick: { giveShiftId: string; takeShiftId: string },
 ): FastifyReply {
-  const evaluation = evaluateSwap(raw, pick);
-  if (evaluation.kind === "evaluated" && hasFinding(evaluation.employees)) {
-    return reply.code(200).send(cannotBeApprovedBody(raw, evaluation.employees));
-  }
-  const body: NotEvaluated = { kind: "not-evaluated" };
-  return reply.code(501).send(body);
+  const answer = swapCheckAnswer(raw, evaluate(raw, pick));
+  return reply.code(answer.status).send(answer.body);
 }
 
 /**
  * Registers POST /api/swap-checks. The roster is the one the identity hook read for this request.
- * `now` is the clock, in epoch milliseconds, read once per request.
+ * `now` is the clock, in epoch milliseconds, read once per request. `evaluate` is the swap
+ * evaluator; the app passes `evaluateSwap`, and tests may pass another.
  */
 export function registerSwapChecksRoute(
   app: FastifyInstance,
   source: RosterSource,
   now: () => number,
+  evaluate: typeof evaluateSwap = evaluateSwap,
 ): void {
   app.post<{ Body: SwapCheckBody }>(
     "/api/swap-checks",
@@ -159,7 +130,7 @@ export function registerSwapChecksRoute(
         return reply.code(200).send(body);
       }
 
-      return evaluateAndReply(reply, raw, { giveShiftId, takeShiftId });
+      return evaluateAndReply(reply, evaluate, raw, { giveShiftId, takeShiftId });
     },
   );
 }

@@ -2,7 +2,16 @@ import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { buildApp } from "./app";
 import type { Roster } from "./test-support";
-import { fixedNow, headersFor, readFixture, readSampleRoster, SAMPLE_NOW_ISO } from "./test-support";
+import {
+  ADD_6,
+  fixedNow,
+  headersFor,
+  operatorName,
+  readFixture,
+  readSampleRoster,
+  SAMPLE_NOW_ISO,
+  STEP_2,
+} from "./test-support";
 
 interface SwapCheckResponse {
   kind: string;
@@ -125,8 +134,8 @@ describe("C2: identity on POST /api/swap-checks", () => {
     "X-Roles %j is accepted as an operator (comma list, trimmed)",
     async (roles) => {
       const response = await postSwapCheck(STEP_1, headersFor(MAYA, roles));
-      expect(response.statusCode).toBe(501);
-      expect(response.json()).toEqual({ kind: "not-evaluated" });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ outcome: "approved-without-review" });
     },
   );
 
@@ -179,8 +188,8 @@ describe("malformed body", () => {
 
   test("extra body properties are stripped, not rejected", async () => {
     const response = await postSwapCheck({ ...STEP_1, extra: 1 }, headersFor(MAYA));
-    expect(response.statusCode).toBe(501);
-    expect(response.json()).toEqual({ kind: "not-evaluated" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ outcome: "approved-without-review" });
   });
 });
 
@@ -351,13 +360,78 @@ describe("C6: ownership of the give and take shifts", () => {
   });
 });
 
-describe("C7: Step 1, the not-evaluated seam", () => {
-  test("a valid CDU swap gives 501 not-evaluated and no outcome", async () => {
+describe("C7: the outcomes of a pick that passes the refusal checks and the gate", () => {
+  const APPROVED_GUIDANCE =
+    "This swap meets VE-HSSE-STD-014 § 3 and triggers neither condition in § 4.2, so under § 4.3 it may be approved without supervisor review. This is a check only: nothing has been approved, stored or sent.";
+  const REVIEW_GUIDANCE =
+    "This swap meets VE-HSSE-STD-014 § 3, but it triggers § 4.2, so it needs review and approval by the shift supervisor of each unit affected. This is a check only: nothing has been sent for review, stored or approved.";
+  const BODY_KEYS = [
+    "outcome",
+    "exportedAt",
+    "exportedAtUtcMinute",
+    "exportedAtSiteLocal",
+    "siteTimeZone",
+    "guidance",
+    "employees",
+  ];
+
+  test.each([
+    ["Step 1", MAYA, STEP_1.giveShiftId, STEP_1.takeShiftId, "step-1.json"],
+    ["Step 2", STEP_2.caller, STEP_2.give, STEP_2.take, "step-2.json"],
+    ["ADD-6", ADD_6.caller, ADD_6.give, ADD_6.take, "add-6.json"],
+  ])("%s gives 200 equal to its shared fixture", async (_label, caller, give, take, fixture) => {
+    const response = await swapCheckAs(caller, give, take);
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(readFixture(fixture));
+  });
+
+  test("Step 1 is approved-without-review, with the exact guidance and the wire key order", async () => {
     const response = await swapCheckAs(MAYA, STEP_1.giveShiftId, STEP_1.takeShiftId);
-    expect(response.statusCode).toBe(501);
     const body = response.json<Record<string, unknown>>();
-    expect(body).toEqual({ kind: "not-evaluated" });
-    expect(body).not.toHaveProperty("outcome");
+    expect(body["outcome"]).toBe("approved-without-review");
+    expect(body["guidance"]).toBe(APPROVED_GUIDANCE);
+    expect(Object.keys(body)).toEqual(BODY_KEYS);
+  });
+
+  test.each([
+    ["Step 2", STEP_2],
+    ["ADD-6", ADD_6],
+  ])("%s is review-required, with the exact guidance and the wire key order", async (_label, pick) => {
+    const response = await swapCheckAs(pick.caller, pick.give, pick.take);
+    const body = response.json<Record<string, unknown>>();
+    expect(body["outcome"]).toBe("review-required");
+    expect(body["guidance"]).toBe(REVIEW_GUIDANCE);
+    expect(Object.keys(body)).toEqual(BODY_KEYS);
+  });
+
+  test("the bodies carry the roster names and no employee number", async () => {
+    const response = await swapCheckAs(MAYA, STEP_1.giveShiftId, STEP_1.takeShiftId);
+    const body = response.json<{ employees: { name: string }[] }>();
+    expect(body.employees.map((employee) => employee.name)).toEqual([operatorName(MAYA), operatorName("102286")]);
+    expect(response.body).not.toContain(MAYA);
+    expect(response.body).not.toContain("102286");
+  });
+
+  test("an evaluation with no result maps to 200 cannot-determine with reason not-evaluable", async () => {
+    const stubbedApp = buildApp({
+      now: fixedNow(SAMPLE_NOW_ISO),
+      evaluate: () => ({ kind: "not-evaluable" }),
+    });
+    await stubbedApp.ready();
+    try {
+      const response = await swapCheckAs(MAYA, STEP_1.giveShiftId, STEP_1.takeShiftId, stubbedApp);
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({
+        outcome: "cannot-determine",
+        exportedAt: "2027-03-07T08:00:00Z",
+        exportedAtUtcMinute: "2027-03-07T08:00Z",
+        exportedAtSiteLocal: "2027-03-07T02:00",
+        siteTimeZone: "America/Chicago",
+        reasons: [{ code: "not-evaluable" }],
+      });
+    } finally {
+      await stubbedApp.close();
+    }
   });
 });
 

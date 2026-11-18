@@ -1,0 +1,381 @@
+{
+  "outcome": "review-required",
+  "exportedAt": "2027-03-07T08:00:00Z",
+  "exportedAtUtcMinute": "2027-03-07T08:00Z",
+  "exportedAtSiteLocal": "2027-03-07T02:00",
+  "siteTimeZone": "America/Chicago",
+  "guidance": "This swap meets VE-HSSE-STD-014 § 3, but it triggers § 4.2, so it needs review and approval by the shift supervisor of each unit affected. This is a check only: nothing has been sent for review, stored or approved.",
+  "employees": [
+    {
+      "party": "give-shift-owner",
+      "name": "Tom Broussard",
+      "gaveShiftId": "CDU-FLD1-0309-D",
+      "tookShiftId": "CDU-FLD1-0311-D",
+      "offDutyBefore": {
+        "fromShiftId": "CDU-FLD1-0310-D",
+        "toShiftId": "CDU-FLD1-0311-D",
+        "from": "2027-03-10T18:00",
+        "to": "2027-03-11T06:00",
+        "hours": 12,
+        "minutes": 0
+      },
+      "offDutyAfter": {
+        "fromShiftId": "CDU-FLD1-0311-D",
+        "toShiftId": "CDU-FLD1-0315-D",
+        "from": "2027-03-11T18:00",
+        "to": "2027-03-15T06:00",
+        "hours": 83,
+        "minutes": 0
+      },
+      "windows": [
+        {
+          "from": "2027-03-01",
+          "to": "2027-03-07",
+          "hours": 12,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-02",
+          "to": "2027-03-08",
+          "hours": 0,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-03",
+          "to": "2027-03-09",
+          "hours": 0,
+          "minutes": 0,
+          "changedBySwap": true
+        },
+        {
+          "from": "2027-03-04",
+          "to": "2027-03-10",
+          "hours": 12,
+          "minutes": 0,
+          "changedBySwap": true
+        },
+        {
+          "from": "2027-03-05",
+          "to": "2027-03-11",
+          "hours": 24,
+          "minutes": 0,
+          "changedBySwap": true
+        },
+        {
+          "from": "2027-03-06",
+          "to": "2027-03-12",
+          "hours": 24,
+          "minutes": 0,
+          "changedBySwap": true
+        },
+        {
+          "from": "2027-03-07",
+          "to": "2027-03-13",
+          "hours": 24,
+          "minutes": 0,
+          "changedBySwap": true
+        },
+        {
+          "from": "2027-03-08",
+          "to": "2027-03-14",
+          "hours": 24,
+          "minutes": 0,
+          "changedBySwap": true
+        },
+        {
+          "from": "2027-03-09",
+          "to": "2027-03-15",
+          "hours": 36,
+          "minutes": 0,
+          "changedBySwap": true
+        },
+        {
+          "from": "2027-03-10",
+          "to": "2027-03-16",
+          "hours": 48,
+          "minutes": 0,
+          "changedBySwap": true
+        },
+        {
+          "from": "2027-03-11",
+          "to": "2027-03-17",
+          "hours": 48,
+          "minutes": 0,
+          "changedBySwap": true
+        },
+        {
+          "from": "2027-03-12",
+          "to": "2027-03-18",
+          "hours": 36,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-13",
+          "to": "2027-03-19",
+          "hours": 48,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-14",
+          "to": "2027-03-20",
+          "hours": 60,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-15",
+          "to": "2027-03-21",
+          "hours": 72,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-16",
+          "to": "2027-03-22",
+          "hours": 60,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-17",
+          "to": "2027-03-23",
+          "hours": 48,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-18",
+          "to": "2027-03-24",
+          "hours": 36,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-19",
+          "to": "2027-03-25",
+          "hours": 36,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-20",
+          "to": "2027-03-26",
+          "hours": 36,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-21",
+          "to": "2027-03-27",
+          "hours": 36,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-22",
+          "to": "2027-03-28",
+          "hours": 24,
+          "minutes": 0,
+          "changedBySwap": false
+        }
+      ],
+      "findings": [],
+      "triggers": [
+        {
+          "rule": "4.2(b)",
+          "code": "seven-day-hours-over-review-threshold",
+          "changedBySwap": false,
+          "thresholdHours": 60,
+          "from": "2027-03-15",
+          "to": "2027-03-21",
+          "hours": 72,
+          "minutes": 0
+        }
+      ]
+    },
+    {
+      "party": "take-shift-owner",
+      "name": "Jerome Guidry",
+      "gaveShiftId": "CDU-FLD1-0311-D",
+      "tookShiftId": "CDU-FLD1-0309-D",
+      "offDutyBefore": {
+        "fromShiftId": "CDU-FLD1-0302-D",
+        "toShiftId": "CDU-FLD1-0309-D",
+        "from": "2027-03-02T18:00",
+        "to": "2027-03-09T06:00",
+        "hours": 156,
+        "minutes": 0
+      },
+      "offDutyAfter": {
+        "fromShiftId": "CDU-FLD1-0309-D",
+        "toShiftId": "CDU-FLD1-0312-D",
+        "from": "2027-03-09T18:00",
+        "to": "2027-03-12T06:00",
+        "hours": 60,
+        "minutes": 0
+      },
+      "windows": [
+        {
+          "from": "2027-03-01",
+          "to": "2027-03-07",
+          "hours": 24,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-02",
+          "to": "2027-03-08",
+          "hours": 12,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-03",
+          "to": "2027-03-09",
+          "hours": 12,
+          "minutes": 0,
+          "changedBySwap": true
+        },
+        {
+          "from": "2027-03-04",
+          "to": "2027-03-10",
+          "hours": 12,
+          "minutes": 0,
+          "changedBySwap": true
+        },
+        {
+          "from": "2027-03-05",
+          "to": "2027-03-11",
+          "hours": 12,
+          "minutes": 0,
+          "changedBySwap": true
+        },
+        {
+          "from": "2027-03-06",
+          "to": "2027-03-12",
+          "hours": 24,
+          "minutes": 0,
+          "changedBySwap": true
+        },
+        {
+          "from": "2027-03-07",
+          "to": "2027-03-13",
+          "hours": 35,
+          "minutes": 0,
+          "changedBySwap": true
+        },
+        {
+          "from": "2027-03-08",
+          "to": "2027-03-14",
+          "hours": 35,
+          "minutes": 0,
+          "changedBySwap": true
+        },
+        {
+          "from": "2027-03-09",
+          "to": "2027-03-15",
+          "hours": 35,
+          "minutes": 0,
+          "changedBySwap": true
+        },
+        {
+          "from": "2027-03-10",
+          "to": "2027-03-16",
+          "hours": 23,
+          "minutes": 0,
+          "changedBySwap": true
+        },
+        {
+          "from": "2027-03-11",
+          "to": "2027-03-17",
+          "hours": 23,
+          "minutes": 0,
+          "changedBySwap": true
+        },
+        {
+          "from": "2027-03-12",
+          "to": "2027-03-18",
+          "hours": 35,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-13",
+          "to": "2027-03-19",
+          "hours": 23,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-14",
+          "to": "2027-03-20",
+          "hours": 12,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-15",
+          "to": "2027-03-21",
+          "hours": 12,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-16",
+          "to": "2027-03-22",
+          "hours": 12,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-17",
+          "to": "2027-03-23",
+          "hours": 12,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-18",
+          "to": "2027-03-24",
+          "hours": 12,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-19",
+          "to": "2027-03-25",
+          "hours": 0,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-20",
+          "to": "2027-03-26",
+          "hours": 0,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-21",
+          "to": "2027-03-27",
+          "hours": 12,
+          "minutes": 0,
+          "changedBySwap": false
+        },
+        {
+          "from": "2027-03-22",
+          "to": "2027-03-28",
+          "hours": 12,
+          "minutes": 0,
+          "changedBySwap": false
+        }
+      ],
+      "findings": [],
+      "triggers": []
+    }
+  ]
+}

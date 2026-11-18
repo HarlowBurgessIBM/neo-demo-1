@@ -71,11 +71,15 @@ function cannotBeApproved(response: LightMyRequestResponse): CannotBeApprovedBod
   return body;
 }
 
-/** Asserts a 501 not-evaluated response with no outcome. */
-function expectNotEvaluated(response: LightMyRequestResponse): void {
-  expect(response.statusCode).toBe(501);
-  expect(response.json()).toEqual({ kind: "not-evaluated" });
-  expect(response.body).not.toContain("outcome");
+/** Asserts a 200 response with the given outcome and no § 3 finding for either employee. */
+function expectOutcomeWithNoFinding(
+  response: LightMyRequestResponse,
+  outcome: "approved-without-review" | "review-required",
+): void {
+  expect(response.statusCode).toBe(200);
+  const body = response.json<{ outcome: string; employees: EmployeeEvaluation[] }>();
+  expect(body.outcome).toBe(outcome);
+  expect(body.employees.flatMap((employee) => employee.findings)).toEqual([]);
 }
 
 function employeeOf(body: CannotBeApprovedBody, party: EmployeeEvaluation["party"]): EmployeeEvaluation {
@@ -307,9 +311,9 @@ describe("criterion 10, API half: the guidance names the exception procedure", (
   });
 });
 
-describe("criterion 11: a pick with no § 3.1 or § 3.3 failure is still not evaluated", () => {
-  test("the Step 1 request returns 501 not-evaluated with no outcome", async () => {
-    expectNotEvaluated(await swapCheck(STEP_1));
+describe("criterion 11: a pick with no § 3.1 or § 3.3 failure is not cannot-be-approved", () => {
+  test("the Step 1 request returns 200 approved-without-review with no finding", async () => {
+    expectOutcomeWithNoFinding(await swapCheck(STEP_1), "approved-without-review");
   });
 });
 
@@ -338,8 +342,11 @@ describe("criterion 15: a failure on a shift the swap did not touch", () => {
     expect(response.json()).toEqual(readFixture("unchanged-shift-qualification.json"));
   });
 
-  test("the same shift outside coverage (2027-03-29) gives 501 not-evaluated with no finding", async () => {
-    expectNotEvaluated(await swapCheck(STEP_2, unchangedShiftQualificationRoster({ outsideCoverage: true })));
+  test("the same shift outside coverage (2027-03-29) gives 200 review-required with no finding", async () => {
+    expectOutcomeWithNoFinding(
+      await swapCheck(STEP_2, unchangedShiftQualificationRoster({ outsideCoverage: true })),
+      "review-required",
+    );
   });
 });
 

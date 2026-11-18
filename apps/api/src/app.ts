@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance, type FastifyServerOptions, type RouteOptions } from "fastify";
+import type { evaluateSwap } from "@shiftswap/rules";
 import { defaultRosterPath } from "./config";
 import { fileRosterSource, fixedRosterSource, type RosterSource } from "./roster";
 import { registerDevUsersRoute } from "./routes/dev-users";
@@ -17,6 +18,8 @@ export interface BuildAppOptions {
   onRoute?: (route: RouteOptions) => void;
   /** The clock, in epoch milliseconds. Defaults to `Date.now`. Tests inject a fixed one. */
   now?: () => number;
+  /** The swap evaluator. Defaults to `evaluateSwap`. Tests inject another, to reach unreachable paths. */
+  evaluate?: typeof evaluateSwap;
 }
 
 export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
@@ -39,7 +42,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
 
   registerShiftsRoute(app, source);
 
-  registerSwapChecksRoute(app, source, options.now ?? Date.now);
+  registerSwapChecksRoute(app, source, options.now ?? Date.now, options.evaluate);
 
   // Development-only user switcher (engineering standard § 8.3). Absent in production, so 404.
   if (options.nodeEnv !== "production") {

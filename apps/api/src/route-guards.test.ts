@@ -137,7 +137,7 @@ describe("C12: the roster file is never written", () => {
       {
         route: "POST /api/swap-checks",
         options: { method: "POST", url: "/api/swap-checks", headers: operator, payload: STEP_1 },
-        expected: 501,
+        expected: 200,
       },
       {
         route: "POST /api/swap-checks",

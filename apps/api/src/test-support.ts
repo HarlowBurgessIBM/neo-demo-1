@@ -178,6 +178,19 @@ export const STEP_4: SwapPick = { caller: "104417", give: "CDU-CON1-0310-D", tak
 export const STEP_6: SwapPick = { caller: "107903", give: "HCU-CON1-0308-D", take: "HCU-CON1-0317-D" };
 /** Step 5: 103078 gives CDU-FLD1-0309-D and takes CDU-FLD1-0318-D. */
 export const STEP_5: SwapPick = { caller: "103078", give: "CDU-FLD1-0309-D", take: "CDU-FLD1-0318-D" };
+/** ADD-3: 108529 gives CDU-FLD1-0318-D and takes CDU-CON1-0326-D. Past the coverage horizon, so the gate stops it. */
+export const ADD_3: SwapPick = { caller: "108529", give: "CDU-FLD1-0318-D", take: "CDU-CON1-0326-D" };
+/** ADD-6: 103078 gives CDU-FLD1-0309-D and takes CDU-FLD1-0311-D. */
+export const ADD_6: SwapPick = { caller: "103078", give: "CDU-FLD1-0309-D", take: "CDU-FLD1-0311-D" };
+
+/** The sample roster's name for an operator. Tests read names here rather than hard-coding them. */
+export function operatorName(employeeNumber: string): string {
+  const operator = readSampleRoster().operators.find((candidate) => candidate.employeeNumber === employeeNumber);
+  if (operator === undefined) {
+    throw new Error("sample roster has no operator with that employee number");
+  }
+  return operator.name;
+}
 
 /** The sample roster with `added` appended to its shifts. Nothing in the sample is changed. */
 function sampleRosterWith(...added: RosterShift[]): Roster {

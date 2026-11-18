@@ -217,7 +217,7 @@ describe("C13: log privacy across every route (NFR-PRIV-001)", () => {
    * POST /api/swap-checks as the pick's caller; expects 200 `cannot-be-approved` with exactly the
    * `expected` findings, in employee order (give-shift-owner, then take-shift-owner). The
    * assertion keeps a scenario from passing the privacy scan on a response that is not the one
-   * it is meant to exercise, such as a 501.
+   * it is meant to exercise, such as a cannot-determine.
    */
   async function expectCannotBeApproved(
     app: FastifyInstance,
@@ -420,7 +420,7 @@ describe("C13: log privacy across every route (NFR-PRIV-001)", () => {
     "POST /api/swap-checks": async (app) => {
       const post = (payload: object, headers: Record<string, string | string[]>, expected: number) =>
         call(app, { method: "POST", url: "/api/swap-checks", headers, payload }, expected);
-      await post(payloadOf(STEP_1), headersFor(MAYA), 501);
+      await post(payloadOf(STEP_1), headersFor(MAYA), 200);
       await post(STEP_8, headersFor(MAYA), 422);
       await post({ giveShiftId: "CDU-CON1-0319-N", takeShiftId: "CDU-CON1-0316-D" }, headersFor(MAYA), 403);
       await post({ giveShiftId: "CDU-CON1-0318-N", takeShiftId: "CDU-CON1-9999-N" }, headersFor(MAYA), 422);
@@ -539,10 +539,11 @@ describe("C13: log privacy across every route (NFR-PRIV-001)", () => {
     expect(missing, `routes with no log-privacy exercise: ${missing.join(", ")}`).toEqual([]);
   });
 
-  test("the exercises produced 200, 400, 401, 403, 404, 422, 501 and 503", () => {
-    for (const status of [200, 400, 401, 403, 404, 422, 501, 503]) {
+  test("the exercises produced 200, 400, 401, 403, 404, 422 and 503, and no other 5xx", () => {
+    for (const status of [200, 400, 401, 403, 404, 422, 503]) {
       expect(statuses.has(status), `status ${status} was not exercised`).toBe(true);
     }
+    expect([...statuses].filter((status) => status >= 500 && status !== 503)).toEqual([]);
   });
 
   test("the harness is wired up: every logger captured lines, including Fastify's request lines", () => {
