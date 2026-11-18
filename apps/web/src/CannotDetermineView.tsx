@@ -34,7 +34,10 @@ function whose(party: CannotDetermineParty): string {
 
 function describeExportProblem(
   field: string,
-  problem: Extract<CannotDetermineReason, { code: "invalid-export-field" }>["problem"],
+  problem: Exclude<
+    Extract<CannotDetermineReason, { code: "invalid-export-field" }>,
+    { party: CannotDetermineParty }
+  >["problem"],
 ): string {
   switch (problem) {
     case "missing":
@@ -67,8 +70,18 @@ function describeEmployeeFieldProblem(
 ): string {
   const owner = whose(reason.party);
   if ("shiftId" in reason) {
-    const part = reason.field === "shifts.unit" ? "unit" : "role";
-    return `In the roster export, ${owner} shift ${reason.shiftId} has a ${reason.problem} ${part}.`;
+    switch (reason.field) {
+      case "shifts.unit":
+        return `In the roster export, ${owner} shift ${reason.shiftId} has a ${reason.problem} unit.`;
+      case "shifts.role":
+        return `In the roster export, ${owner} shift ${reason.shiftId} has a ${reason.problem} role.`;
+      case "shifts.end":
+        return `In the roster export, ${owner} shift ${reason.shiftId} ends at or before it starts.`;
+      default: {
+        const unrecognised: never = reason;
+        return describeUnrecognisedReason(unrecognised);
+      }
+    }
   }
   // `index` counts from 0 on the wire; people count records from 1.
   const record = `${owner} qualification record ${reason.index + 1}`;

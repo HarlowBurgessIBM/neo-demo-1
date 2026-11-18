@@ -88,6 +88,13 @@ export type CannotDetermineReason =
       shiftId: string;
       problem: "missing" | "malformed";
     }
+  | {
+      code: "invalid-export-field";
+      field: "shifts.end";
+      party: CannotDetermineParty;
+      shiftId: string;
+      problem: "not-after-start";
+    }
   | { code: "coverage-mismatch"; field: "coverage.from" | "coverage.to"; actual: string; expected: string }
   | { code: "now-before-export"; exportedAt: string; now: string }
   // `ageMinutes` is the 0-59 remainder after whole hours, not the total age in minutes.
