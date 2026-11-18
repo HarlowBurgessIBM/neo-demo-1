@@ -9,6 +9,7 @@ import {
   failListingRoster,
   fixedNow,
   headersFor,
+  readFixture,
   readSampleRoster,
   readSampleRosterRaw,
   SAMPLE_NOW_ISO,
@@ -420,7 +421,9 @@ describe("C13: log privacy across every route (NFR-PRIV-001)", () => {
     "POST /api/swap-checks": async (app) => {
       const post = (payload: object, headers: Record<string, string | string[]>, expected: number) =>
         call(app, { method: "POST", url: "/api/swap-checks", headers, payload }, expected);
-      await post(payloadOf(STEP_1), headersFor(MAYA), 200);
+      // Step 1 is the approved-without-review answer; a bare 200 would also match the other outcomes.
+      const step1 = await post(payloadOf(STEP_1), headersFor(MAYA), 200);
+      expect(step1.json()).toEqual(readFixture("step-1.json"));
       await post(STEP_8, headersFor(MAYA), 422);
       await post({ giveShiftId: "CDU-CON1-0319-N", takeShiftId: "CDU-CON1-0316-D" }, headersFor(MAYA), 403);
       await post({ giveShiftId: "CDU-CON1-0318-N", takeShiftId: "CDU-CON1-9999-N" }, headersFor(MAYA), 422);

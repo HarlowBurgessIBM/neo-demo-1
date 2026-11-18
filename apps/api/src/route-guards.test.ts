@@ -131,13 +131,14 @@ describe("C12: the roster file is never written", () => {
     });
     await app.ready();
     const operator = headersFor(MAYA);
-    const calls: { route: string; options: InjectOptions; expected: number }[] = [
+    const calls: { route: string; options: InjectOptions; expected: number; outcome?: string }[] = [
       { route: "GET /api/healthz", options: { method: "GET", url: "/api/healthz" }, expected: 200 },
       { route: "GET /api/shifts", options: { method: "GET", url: "/api/shifts", headers: operator }, expected: 200 },
       {
         route: "POST /api/swap-checks",
         options: { method: "POST", url: "/api/swap-checks", headers: operator, payload: STEP_1 },
         expected: 200,
+                outcome: "approved-without-review",
       },
       {
         route: "POST /api/swap-checks",
@@ -153,8 +154,13 @@ describe("C12: the roster file is never written", () => {
     ];
     try {
       const statuses: number[] = [];
-      for (const { options } of calls) {
-        statuses.push((await app.inject(options)).statusCode);
+      for (const { options, outcome } of calls) {
+        const response = await app.inject(options);
+        statuses.push(response.statusCode);
+        if (outcome !== undefined) {
+          // A bare 200 also matches the other outcomes, so the call is pinned to its own.
+          expect(response.json<{ outcome?: unknown }>().outcome).toBe(outcome);
+        }
       }
       // The routes were really exercised.
       expect(statuses).toEqual(calls.map((call) => call.expected));

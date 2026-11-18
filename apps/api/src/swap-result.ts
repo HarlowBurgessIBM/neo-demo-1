@@ -107,6 +107,7 @@ export interface SwapCheckAnswer {
 export function swapCheckAnswer(raw: unknown, evaluation: SwapEvaluation): SwapCheckAnswer {
   if (evaluation.kind === "not-evaluable") {
     // The determinability gate has passed, so this is not expected; the mapping stays total.
+    // It is tested only through the injected `evaluate`, since the real rules never reach it.
     return {
       status: 200,
       body: { outcome: "cannot-determine", ...exportStamp(raw), reasons: [{ code: "not-evaluable" }] },
