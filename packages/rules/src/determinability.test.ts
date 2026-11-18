@@ -794,6 +794,174 @@ describe("malformed shift times", () => {
   });
 });
 
+describe("a shift that does not end after it starts (ruling 4)", () => {
+  const base = buildRoster();
+
+  /** `wall` (YYYY-MM-DDTHH:mm) plus `minutes` as plain calendar arithmetic, with no time zone. */
+  function wallPlus(wall: string, minutes: number): string {
+    return new Date(Date.parse(`${wall}:00Z`) + minutes * 60_000).toISOString().slice(0, 16);
+  }
+
+  test.each([
+    ["give owner's swapped shift", GIVE_SHIFT_ID, "give-shift-owner"],
+    ["give owner's other shift", GIVE_OTHER_SHIFT_ID, "give-shift-owner"],
+    ["take owner's swapped shift", TAKE_SHIFT_ID, "take-shift-owner"],
+    ["take owner's other shift", TAKE_OTHER_SHIFT_ID, "take-shift-owner"],
+  ] as const)("the %s with end equal to start gives exactly the reason", (_label, shiftId, party) => {
+    const start = "2027-03-10T06:00";
+    const result = check(replaceShift(base, shiftId, { start, end: start }), FRESH_NOW);
+    expect(result).toStrictEqual(
+      refused({
+        code: "invalid-export-field",
+        field: "shifts.end",
+        party,
+        shiftId,
+        problem: "not-after-start",
+      }),
+    );
+  });
+
+  test.each([
+    ["give owner's other shift", GIVE_OTHER_SHIFT_ID, "give-shift-owner"],
+    ["take owner's other shift", TAKE_OTHER_SHIFT_ID, "take-shift-owner"],
+    ["take owner's swapped shift", TAKE_SHIFT_ID, "take-shift-owner"],
+  ] as const)("the %s with end before start gives the reason for that party", (_label, shiftId, party) => {
+    const roster = replaceShift(base, shiftId, { start: "2027-03-10T18:00", end: "2027-03-10T06:00" });
+    expect(check(roster, FRESH_NOW)).toStrictEqual(
+      refused({
+        code: "invalid-export-field",
+        field: "shifts.end",
+        party,
+        shiftId,
+        problem: "not-after-start",
+      }),
+    );
+  });
+
+  test("a reversed shift of a bystander gives no reason", () => {
+    const roster = replaceShift(base, BYSTANDER_SHIFT_ID, {
+      start: "2027-03-10T18:00",
+      end: "2027-03-10T06:00",
+    });
+    expect(check(roster, FRESH_NOW)).toEqual({ determinable: true });
+  });
+
+  test.each([
+    ["before coverage", "2027-02-28T18:00", "2027-02-28T06:00"],
+    ["after coverage", "2027-03-29T18:00", "2027-03-29T06:00"],
+  ])("a reversed shift starting %s gives no reason", (_label, start, end) => {
+    const roster = replaceShift(base, GIVE_OTHER_SHIFT_ID, { start, end });
+    expect(check(roster, FRESH_NOW)).toEqual({ determinable: true });
+  });
+
+  test("a start on the last coverage date is within coverage", () => {
+    const roster = replaceShift(base, GIVE_OTHER_SHIFT_ID, {
+      start: "2027-03-28T18:00",
+      end: "2027-03-28T06:00",
+    });
+    expect(codesOf(check(roster, FRESH_NOW))).toEqual(["invalid-export-field"]);
+  });
+
+  test("a start in the skipped hour gives only nonexistent-local-time, with no shifts.end reason", () => {
+    const roster = addShift(
+      base,
+      makeShift("GIVE-A3", GIVE_OWNER, "2027-03-14T02:30", "2027-03-14T01:00"),
+    );
+    expect(check(roster, FRESH_NOW)).toStrictEqual(
+      refused({
+        code: "nonexistent-local-time",
+        shiftId: "GIVE-A3",
+        field: "start",
+        value: "2027-03-14T02:30",
+      }),
+    );
+  });
+
+  test("a reversed shift with a malformed end gives only the malformed reason", () => {
+    const roster = replaceShift(base, GIVE_OTHER_SHIFT_ID, { end: "2027-03-12 06:00" });
+    expect(check(roster, FRESH_NOW)).toStrictEqual(
+      refused({ code: "shift-time-malformed", shiftId: GIVE_OTHER_SHIFT_ID, field: "end" }),
+    );
+  });
+
+  test("the reason follows the shifts.unit and shifts.role reasons and precedes the horizon reasons", () => {
+    const roster = {
+      ...base,
+      shifts: base.shifts.map((shift) => {
+        if (shift.shiftId === GIVE_SHIFT_ID) {
+          return { ...shift, start: "2027-03-10T06:00", end: "2027-03-10T06:00", unit: 5 };
+        }
+        if (shift.shiftId === TAKE_SHIFT_ID) {
+          return { ...shift, start: "2027-03-27T18:00", end: "2027-03-27T06:00", role: null };
+        }
+        return shift;
+      }),
+    };
+    expect(check(roster, FRESH_NOW)).toStrictEqual(
+      refused(
+        {
+          code: "invalid-export-field",
+          field: "shifts.unit",
+          party: "give-shift-owner",
+          shiftId: GIVE_SHIFT_ID,
+          problem: "malformed",
+        },
+        {
+          code: "invalid-export-field",
+          field: "shifts.role",
+          party: "take-shift-owner",
+          shiftId: TAKE_SHIFT_ID,
+          problem: "missing",
+        },
+        {
+          code: "invalid-export-field",
+          field: "shifts.end",
+          party: "give-shift-owner",
+          shiftId: GIVE_SHIFT_ID,
+          problem: "not-after-start",
+        },
+        {
+          code: "invalid-export-field",
+          field: "shifts.end",
+          party: "take-shift-owner",
+          shiftId: TAKE_SHIFT_ID,
+          problem: "not-after-start",
+        },
+        {
+          code: "shift-outside-horizon",
+          shiftId: TAKE_SHIFT_ID,
+          start: "2027-03-27T18:00",
+          horizonFrom: "2027-03-07",
+          horizonTo: "2027-03-22",
+        },
+      ),
+    );
+  });
+
+  test("for an in-coverage give owner shift the reason is present iff the end is not after the start", () => {
+    const start = "2027-03-10T12:00";
+    const reason: CannotDetermineReason = {
+      code: "invalid-export-field",
+      field: "shifts.end",
+      party: "give-shift-owner",
+      shiftId: GIVE_OTHER_SHIFT_ID,
+      problem: "not-after-start",
+    };
+    fc.assert(
+      fc.property(fc.integer({ min: -600, max: 1440 }), (minutes) => {
+        const roster = replaceShift(base, GIVE_OTHER_SHIFT_ID, {
+          start,
+          end: wallPlus(start, minutes),
+        });
+        const result = check(roster, FRESH_NOW);
+        return minutes <= 0
+          ? JSON.stringify(reasonsOf(result)) === JSON.stringify([reason])
+          : result.determinable;
+      }),
+    );
+  });
+});
+
 describe("clock changes (criterion 16)", () => {
   const base = buildRoster();
 

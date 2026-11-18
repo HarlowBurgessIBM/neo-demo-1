@@ -887,6 +887,54 @@ describe("a swap that cannot be evaluated", () => {
     expect(evaluateSwap(base, { giveShiftId, takeShiftId })).toEqual({ kind: "not-evaluable" });
   });
 
+  describe("a shift that does not end after it starts", () => {
+    const otherShifts = [
+      ["the give owner's other shift", GIVE_OWNER],
+      ["the take owner's other shift", TAKE_OWNER],
+    ] as const;
+
+    test.each([
+      ["the give shift ending when it starts", GIVE_SHIFT_ID, "2027-03-10T06:00"],
+      ["the give shift ending before it starts", GIVE_SHIFT_ID, "2027-03-10T05:59"],
+      ["the take shift ending when it starts", TAKE_SHIFT_ID, "2027-03-11T06:00"],
+      ["the take shift ending before it starts", TAKE_SHIFT_ID, "2027-03-11T05:00"],
+    ])("is not evaluable for %s", (_label, shiftId, end) => {
+      expect(evaluate(replaceShift(base, shiftId, { end }))).toEqual({ kind: "not-evaluable" });
+    });
+
+    test.each(otherShifts)("is not evaluable for %s, ending at its start", (_label, owner) => {
+      const roster = rosterOf([
+        ...base.shifts,
+        makeShift("OTHER-1", owner, "2027-03-15T06:00", "2027-03-15T06:00"),
+      ]);
+      expect(evaluate(roster)).toEqual({ kind: "not-evaluable" });
+    });
+
+    test.each(otherShifts)("is not evaluable for %s, ending before its start", (_label, owner) => {
+      const roster = rosterOf([
+        ...base.shifts,
+        makeShift("OTHER-1", owner, "2027-03-15T18:00", "2027-03-15T06:00"),
+      ]);
+      expect(evaluate(roster)).toEqual({ kind: "not-evaluable" });
+    });
+
+    test("is evaluable when the reversed shift starts outside coverage", () => {
+      const roster = rosterOf([
+        ...base.shifts,
+        makeShift("OTHER-1", GIVE_OWNER, "2027-02-28T18:00", "2027-02-28T06:00"),
+      ]);
+      expect(evaluate(roster).kind).toBe("evaluated");
+    });
+
+    test("is evaluable when the reversed shift belongs to a bystander", () => {
+      const roster = rosterOf([
+        ...base.shifts,
+        makeShift("OTHER-1", BYSTANDER, "2027-03-15T18:00", "2027-03-15T06:00"),
+      ]);
+      expect(evaluate(roster).kind).toBe("evaluated");
+    });
+  });
+
   test("is not evaluable for an owner whose qualification entry is malformed", () => {
     const roster = {
       ...base,
