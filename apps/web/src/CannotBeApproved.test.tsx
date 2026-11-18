@@ -318,6 +318,20 @@ describe("seven-day windows rendered from step-5.json (C8, C11 web half)", () =>
     expect(windowRow(table, "2027-03-16 to 2027-03-22")[0]).toBe("72 h");
   });
 
+  test("a window and finding with minutes show hours and minutes as sent: 84 h 30 m", async () => {
+    const body = withTom((employee) => ({
+      ...employee,
+      windows: employee.windows.map((window) => (window.from === "2027-03-15" ? { ...window, minutes: 30 } : window)),
+      findings: employee.findings.map((finding) => ({ ...finding, minutes: 30 })),
+    }));
+    const { section } = await renderCannotBeApproved(body);
+
+    expect(failureItems(section)).toEqual([
+      "Tom Broussard: § 3.2 — 84 h 30 m in the seven days 2027-03-15 to 2027-03-21, over the 72 h maximum; changed by this swap.",
+    ]);
+    expect(windowRow(windowTable(section, TOM), "2027-03-15 to 2027-03-21")).toEqual(["84 h 30 m", "Changed"]);
+  });
+
   test("Jerome's 2027-03-07 to 2027-03-13 window shows 47 h, not 48 h", async () => {
     const { section } = await renderCannotBeApproved(fixtures.step5);
 
@@ -352,7 +366,13 @@ describe("accessibility of each cannot-be-approved view (C14, NFR-A11Y-001)", ()
     expect(within(section).getByRole("heading", { level: 2, name: "Cannot be approved" })).toBeTruthy();
     expect(failureItems(section)).toEqual(failures);
     // Each employee's window table is on the page when the axe check runs.
-    expect(within(section).getAllByRole("table")).toHaveLength(body.employees.length);
+    const tables = within(section).getAllByRole("table");
+    expect(tables).toHaveLength(body.employees.length);
+    // ...and each has one body row per window, so a header-only table cannot pass.
+    expect(tables.map((table) => windowRows(table).length)).toEqual(body.employees.map((employee) => employee.windows.length));
+    for (const employee of body.employees) {
+      expect(employee.windows.length).toBeGreaterThan(0);
+    }
     expect(await wcagViolations(container)).toEqual([]);
   });
 });
@@ -401,10 +421,18 @@ describe("guard rejects malformed figures", () => {
     { name: "a window with minutes over 59 (60)", body: withWindow({ minutes: 60 }) },
     { name: "a window with changedBySwap as a string", body: withWindow({ changedBySwap: "yes" }) },
     { name: "a window with no from date", body: withWindow({ from: undefined }) },
+    { name: "a window with no to date", body: withWindow({ to: undefined }) },
     { name: "an employee with no windows", body: withTom((employee) => ({ ...employee, windows: undefined })) },
     { name: "windows that are not an array", body: withTom((employee) => ({ ...employee, windows: {} })) },
     { name: "a § 3.2 finding with a maximum of 60 h", body: withWindowFinding({ maximumHours: 60 }) },
     { name: "a § 3.2 finding with minutes over 59 (75)", body: withWindowFinding({ minutes: 75 }) },
+    { name: "a § 3.2 finding with no changedBySwap", body: withWindowFinding({ changedBySwap: undefined }) },
+    { name: "a § 3.2 finding with changedBySwap as a string", body: withWindowFinding({ changedBySwap: "no" }) },
+    { name: "a § 3.2 finding with no from date", body: withWindowFinding({ from: undefined }) },
+    { name: "a § 3.2 finding with no to date", body: withWindowFinding({ to: undefined }) },
+    { name: "a § 3.2 finding with negative hours (-1)", body: withWindowFinding({ hours: -1 }) },
+    { name: "a § 3.2 finding with fractional hours (1.5)", body: withWindowFinding({ hours: 1.5 }) },
+    { name: "a § 3.2 finding with no hours", body: withWindowFinding({ hours: undefined }) },
     { name: "a § 3.2 finding with the wrong code", body: withWindowFinding({ code: "seven-day-hours-under-maximum" }) },
   ];
 
