@@ -6,6 +6,7 @@ import type {
   OffDutyFinding,
   OffDutyPeriod,
   QualificationFinding,
+  SevenDayHoursFinding,
 } from "./contract";
 
 interface CannotBeApprovedViewProps {
@@ -36,6 +37,10 @@ function describeOffDutyFinding(finding: OffDutyFinding): string {
   return `off duty ${formatDuration(finding)} ${shifts}${overlap}, under the ${finding.minimumHours} h minimum`;
 }
 
+function describeSevenDayHoursFinding(finding: SevenDayHoursFinding): string {
+  return `${formatDuration(finding)} in the seven days ${finding.from} to ${finding.to}, over the ${finding.maximumHours} h maximum`;
+}
+
 function describeQualificationFinding(finding: QualificationFinding): string {
   const shift = `${finding.unit} ${finding.role}, shift ${finding.shiftId} starting ${finding.shiftStartDate}`;
   return finding.validThrough === null
@@ -54,6 +59,8 @@ function describeFinding(finding: Finding): { reference: string; detail: string 
   switch (finding.rule) {
     case "3.1":
       return { reference: "§ 3.1", detail: describeOffDutyFinding(finding) };
+    case "3.2":
+      return { reference: "§ 3.2", detail: describeSevenDayHoursFinding(finding) };
     case "3.3":
       return { reference: "§ 3.3", detail: describeQualificationFinding(finding) };
     default:
@@ -118,6 +125,29 @@ export function CannotBeApprovedView({ result, onChooseAgain }: CannotBeApproved
             <li>{describeOffDutyPeriod(employee.offDutyAfter, "after", employee.tookShiftId)}</li>
             {employee.findings.length === 0 ? <li>No failures.</li> : null}
           </ul>
+          {employee.windows.length === 0 ? null : (
+            <table>
+              <caption>{employeeLabel(employee)}: hours in each seven-day window (§ 3.2, at most 72 h)</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Dates</th>
+                  <th scope="col">Hours</th>
+                  <th scope="col">Changed by the swap</th>
+                </tr>
+              </thead>
+              <tbody>
+                {employee.windows.map((window) => (
+                  <tr key={window.from}>
+                    <td>
+                      {window.from} to {window.to}
+                    </td>
+                    <td>{formatDuration(window)}</td>
+                    <td>{window.changedBySwap ? "Changed" : "Not changed"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       ))}
       <button type="button" onClick={onChooseAgain}>

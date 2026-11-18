@@ -151,7 +151,31 @@ export interface QualificationFinding {
   validThrough: string | null;
 }
 
-export type Finding = OffDutyFinding | QualificationFinding;
+/**
+ * One run of seven consecutive site-local dates, as the API measured it. `from` and `to` are
+ * inclusive dates; `hours` and `minutes` are the scheduled time, shown as sent.
+ */
+export interface SevenDayWindow {
+  from: string;
+  to: string;
+  hours: number;
+  minutes: number;
+  changedBySwap: boolean;
+}
+
+/** A § 3.2 finding: a seven-day window over the maximum. */
+export interface SevenDayHoursFinding {
+  rule: "3.2";
+  code: "seven-day-hours-over-maximum";
+  changedBySwap: boolean;
+  maximumHours: 72;
+  from: string;
+  to: string;
+  hours: number;
+  minutes: number;
+}
+
+export type Finding = OffDutyFinding | SevenDayHoursFinding | QualificationFinding;
 
 /** One employee's part of a cannot-be-approved result. "You" is always the give party. */
 export interface EmployeeResult {
@@ -163,10 +187,12 @@ export interface EmployeeResult {
   /** Null when no neighbouring shift is in the export's coverage. */
   offDutyBefore: OffDutyPeriod | null;
   offDutyAfter: OffDutyPeriod | null;
+  /** Every seven-day window in coverage; empty when coverage is shorter than seven dates. */
+  windows: SevenDayWindow[];
   findings: Finding[];
 }
 
-/** 200. The swap fails § 3.1 or § 3.3 and cannot be approved. `outcome` marks a swap check answer. */
+/** 200. The swap fails § 3.1, § 3.2 or § 3.3 and cannot be approved. `outcome` marks a swap check answer. */
 export interface CannotBeApprovedResponse {
   outcome: "cannot-be-approved";
   exportedAt: string | null;

@@ -122,6 +122,18 @@ function isOffDutyPeriod(value: unknown): boolean {
   );
 }
 
+/** The view shows a window's `hours` and `minutes` as sent, so they get the same shape checks as an off-duty period. */
+function isSevenDayWindow(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    isString(value["from"]) &&
+    isString(value["to"]) &&
+    isWholeHours(value["hours"]) &&
+    isWholeMinutes(value["minutes"]) &&
+    typeof value["changedBySwap"] === "boolean"
+  );
+}
+
 function isOptionalOffDutyPeriod(value: unknown): boolean {
   return value === null || isOffDutyPeriod(value);
 }
@@ -144,6 +156,16 @@ function isFinding(value: unknown): boolean {
         (value["overlap"] === undefined || value["overlap"] === true) &&
         isOffDutyPeriod(value)
       );
+    case "3.2":
+      return (
+        value["code"] === "seven-day-hours-over-maximum" &&
+        typeof value["changedBySwap"] === "boolean" &&
+        value["maximumHours"] === 72 &&
+        isString(value["from"]) &&
+        isString(value["to"]) &&
+        isWholeHours(value["hours"]) &&
+        isWholeMinutes(value["minutes"])
+      );
     case "3.3":
       return (
         (value["code"] === "qualification-expired" || value["code"] === "no-qualification-for-unit-and-role") &&
@@ -164,12 +186,15 @@ function isEmployeeResult(value: unknown): boolean {
     return false;
   }
   const findings = value["findings"];
+  const windows = value["windows"];
   // The view reads these fields directly, so each must have the type it is read as.
   return (
     isString(value["party"]) &&
     isStringOrNull(value["name"]) &&
     isString(value["gaveShiftId"]) &&
     isString(value["tookShiftId"]) &&
+    Array.isArray(windows) &&
+    windows.every(isSevenDayWindow) &&
     Array.isArray(findings) &&
     findings.every(isFinding) &&
     isOptionalOffDutyPeriod(value["offDutyBefore"]) &&
