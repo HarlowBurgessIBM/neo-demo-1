@@ -96,11 +96,20 @@ function isString(value: unknown): value is string {
   return typeof value === "string";
 }
 
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
+/** A whole number of hours, zero or more. This checks the shape of the figure; it does no arithmetic. */
+function isWholeHours(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
-/** The view shows `hours` and `minutes` as sent, so a period without both as finite numbers is rejected. */
+/** A whole number of minutes from 0 to 59. This checks the shape of the figure; it does no arithmetic. */
+function isWholeMinutes(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 59;
+}
+
+/**
+ * The view shows `hours` and `minutes` as sent, so a period whose hours are not a whole non-negative
+ * number, or whose minutes are not a whole number from 0 to 59, is rejected.
+ */
 function isOffDutyPeriod(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -108,8 +117,8 @@ function isOffDutyPeriod(value: unknown): boolean {
     isString(value["toShiftId"]) &&
     isString(value["from"]) &&
     isString(value["to"]) &&
-    isFiniteNumber(value["hours"]) &&
-    isFiniteNumber(value["minutes"])
+    isWholeHours(value["hours"]) &&
+    isWholeMinutes(value["minutes"])
   );
 }
 
@@ -119,7 +128,8 @@ function isOptionalOffDutyPeriod(value: unknown): boolean {
 
 /**
  * Checks the fields the view reads from a finding, per rule. A finding with a rule this build does
- * not know is accepted when it has a string rule and code, so the view's fallback stays reachable.
+ * not know is accepted when it has a string rule and code and a boolean `changedBySwap`, so the
+ * view's fallback stays reachable.
  */
 function isFinding(value: unknown): boolean {
   if (!isRecord(value) || !isString(value["rule"]) || !isString(value["code"])) {
@@ -145,7 +155,7 @@ function isFinding(value: unknown): boolean {
         isStringOrNull(value["validThrough"])
       );
     default:
-      return true;
+      return typeof value["changedBySwap"] === "boolean";
   }
 }
 
