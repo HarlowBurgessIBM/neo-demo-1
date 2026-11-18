@@ -16,16 +16,18 @@ import {
   STEP_2,
   STEP_3,
   STEP_4,
+  STEP_5,
   STEP_6,
   unchangedShiftQualificationRoster,
+  unchangedWindowRoster,
   type SwapPick,
 } from "./test-support";
 
 // C13 and NFR-PRIV-001: a log-capture harness over every route, with a positive control, finds
 // zero employee names or numbers in log output. It also covers the swap-check gate outcomes
-// (Step 7, ADD-3 and the malformed-roster fixtures), the cannot-be-approved outcomes (Steps 3, 4
-// and 6, the fail-listing fixture and the unchanged-shift § 3.3 fixture) and the
-// roster-unavailable 503.
+// (Step 7, ADD-3 and the malformed-roster fixtures), the cannot-be-approved outcomes (Steps 3, 4,
+// 5 and 6, the fail-listing fixture, the unchanged-shift § 3.3 fixture and the unchanged-window
+// § 3.2 fixture) and the roster-unavailable 503.
 
 const MAYA = "104417";
 const LUIS = "102286";
@@ -268,6 +270,13 @@ describe("C13: log privacy across every route (NFR-PRIV-001)", () => {
         expectCannotBeApproved(app, STEP_4, [{ party: "give-shift-owner", rule: "3.1", changedBySwap: true }]),
     },
     {
+      name: "Step 5: a § 3.2 finding on the give shift owner",
+      options: {},
+      nowIso: SAMPLE_NOW_ISO,
+      run: (app) =>
+        expectCannotBeApproved(app, STEP_5, [{ party: "give-shift-owner", rule: "3.2", changedBySwap: true }]),
+    },
+    {
       name: "Step 6: a § 3.3 finding on the give shift owner",
       options: {},
       nowIso: SAMPLE_NOW_ISO,
@@ -290,6 +299,13 @@ describe("C13: log privacy across every route (NFR-PRIV-001)", () => {
       nowIso: SAMPLE_NOW_ISO,
       run: (app) =>
         expectCannotBeApproved(app, STEP_2, [{ party: "take-shift-owner", rule: "3.3", changedBySwap: false }]),
+    },
+    {
+      name: "unchanged-window roster: a § 3.2 finding on a window the swap did not change",
+      options: { roster: unchangedWindowRoster() },
+      nowIso: SAMPLE_NOW_ISO,
+      run: (app) =>
+        expectCannotBeApproved(app, STEP_1, [{ party: "take-shift-owner", rule: "3.2", changedBySwap: false }]),
     },
     {
       name: "Step 7: the clock is a day after the export",
@@ -488,9 +504,17 @@ describe("C13: log privacy across every route (NFR-PRIV-001)", () => {
     expect(registered.has("POST /api/swap-checks")).toBe(true);
   });
 
-  test("the scenarios include Steps 3, 4 and 6, the fail-listing roster and the unchanged-shift § 3.3 roster", () => {
+  test("the scenarios include Steps 3, 4, 5 and 6, the fail-listing roster, the unchanged-shift § 3.3 roster and the unchanged-window roster", () => {
     const names = scenarios.map((scenario) => scenario.name);
-    for (const prefix of ["Step 3:", "Step 4:", "Step 6:", "fail-listing roster:", "unchanged-shift § 3.3 roster:"]) {
+    for (const prefix of [
+      "Step 3:",
+      "Step 4:",
+      "Step 5:",
+      "Step 6:",
+      "fail-listing roster:",
+      "unchanged-shift § 3.3 roster:",
+      "unchanged-window roster:",
+    ]) {
       expect(
         names.some((name) => name.startsWith(prefix)),
         `no scenario starts with "${prefix}"`,
