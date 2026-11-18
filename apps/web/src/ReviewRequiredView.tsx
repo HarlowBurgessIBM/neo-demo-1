@@ -17,21 +17,17 @@ function describeSevenDayTrigger(trigger: SevenDayReviewTrigger): string {
   return `${formatDuration(trigger)} in the seven days ${trigger.from} to ${trigger.to}, over the ${trigger.thresholdHours} h review threshold`;
 }
 
-/** A trigger this build does not know. The type system says it cannot happen; the wire can. */
-function describeUnrecognisedTrigger(trigger: never): string {
-  const shape: unknown = trigger;
-  const rule = typeof shape === "object" && shape !== null && "rule" in shape ? String(shape.rule) : "unknown";
-  return `a review trigger this page cannot describe (rule ${rule})`;
-}
-
 function describeTrigger(trigger: ReviewTrigger): { reference: string; detail: string } {
   switch (trigger.rule) {
     case "4.2(a)":
       return { reference: "§ 4.2(a)", detail: describeOffDutyTrigger(trigger) };
     case "4.2(b)":
       return { reference: "§ 4.2(b)", detail: describeSevenDayTrigger(trigger) };
-    default:
-      return { reference: "§ 4.2(?)", detail: describeUnrecognisedTrigger(trigger) };
+    default: {
+      // The API client rejects any other rule, so a trigger never reaches here with one.
+      const unreachable: never = trigger;
+      return unreachable;
+    }
   }
 }
 

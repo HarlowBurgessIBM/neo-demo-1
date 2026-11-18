@@ -180,12 +180,12 @@ function isFinding(value: unknown): boolean {
 }
 
 /**
- * Checks the fields the view reads from a § 4.2 trigger, per rule. As with findings, a trigger with
- * a rule this build does not know is accepted when it has a string rule and code and a boolean
- * `changedBySwap`, so the view's fallback stays reachable.
+ * Checks the fields the view reads from a § 4.2 trigger. The trigger contract is a closed set of two
+ * rules, so a trigger with any other rule, or a known rule with the wrong code, threshold or figures,
+ * is rejected.
  */
 function isReviewTrigger(value: unknown): boolean {
-  if (!isRecord(value) || !isString(value["rule"]) || !isString(value["code"])) {
+  if (!isRecord(value)) {
     return false;
   }
   switch (value["rule"]) {
@@ -208,7 +208,7 @@ function isReviewTrigger(value: unknown): boolean {
         isWholeMinutes(value["minutes"])
       );
     default:
-      return typeof value["changedBySwap"] === "boolean";
+      return false;
   }
 }
 
@@ -251,16 +251,42 @@ function hasEvaluationShape(body: Record<string, unknown>): boolean {
   );
 }
 
+/** The `findings` and `triggers` arrays of each employee. Call only after `hasEvaluationShape` has passed. */
+function employeeLists(body: Record<string, unknown>, key: "findings" | "triggers"): unknown[][] {
+  const employees = body["employees"];
+  if (!Array.isArray(employees)) {
+    return [];
+  }
+  return employees.flatMap((employee: unknown) => {
+    const list = isRecord(employee) ? employee[key] : undefined;
+    return Array.isArray(list) ? [list] : [];
+  });
+}
+
 function isCannotBeApprovedBody(body: unknown): body is CannotBeApprovedResponse {
   return isRecord(body) && body["outcome"] === "cannot-be-approved" && hasEvaluationShape(body);
 }
 
+/** Meeting § 3 with no § 4.2 trigger: an `approved-without-review` body with a finding or a trigger contradicts itself. */
 function isApprovedWithoutReviewBody(body: unknown): body is ApprovedWithoutReviewResponse {
-  return isRecord(body) && body["outcome"] === "approved-without-review" && hasEvaluationShape(body);
+  return (
+    isRecord(body) &&
+    body["outcome"] === "approved-without-review" &&
+    hasEvaluationShape(body) &&
+    employeeLists(body, "findings").every((list) => list.length === 0) &&
+    employeeLists(body, "triggers").every((list) => list.length === 0)
+  );
 }
 
+/** Meeting § 3 with at least one § 4.2 trigger: a `review-required` body with a finding or no trigger contradicts itself. */
 function isReviewRequiredBody(body: unknown): body is ReviewRequiredResponse {
-  return isRecord(body) && body["outcome"] === "review-required" && hasEvaluationShape(body);
+  return (
+    isRecord(body) &&
+    body["outcome"] === "review-required" &&
+    hasEvaluationShape(body) &&
+    employeeLists(body, "findings").every((list) => list.length === 0) &&
+    employeeLists(body, "triggers").some((list) => list.length > 0)
+  );
 }
 
 function isRosterUnavailableBody(body: unknown): body is RosterUnavailableResponse {
