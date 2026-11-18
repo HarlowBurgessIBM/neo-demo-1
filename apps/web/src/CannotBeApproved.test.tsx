@@ -209,6 +209,21 @@ describe("every fixture (C10 web half)", () => {
   });
 });
 
+describe("no review wording on a cannot-be-approved view (W4)", () => {
+  // These fixtures carry non-empty triggers, so the page has them to leak. The guidance and the
+  // headings say none of these words (the guidance cites § 4.4), so the whole region is checked.
+  const withTriggers = cases.filter(({ body }) => body.employees.some((employee) => employee.triggers.length > 0));
+
+  test.each(withTriggers)("$name has triggers in the response and shows no § 4.2, review, supervisor or trigger text", async ({
+    body,
+  }) => {
+    const { section } = await renderCannotBeApproved(body);
+
+    expect(section.textContent).not.toMatch(/4\.2|review|supervisor|trigger/i);
+    expect(screen.queryByRole("heading", { name: /review|trigger/i })).toBeNull();
+  });
+});
+
 describe("rendered from the shared fixtures (C12, C17)", () => {
   test("step-4.json: Maya's before figure is 10 h and not 11 h", async () => {
     const { section } = await renderCannotBeApproved(fixtures.step4);
