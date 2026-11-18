@@ -23,7 +23,7 @@ import {
   setQualifications,
   withCoverage,
 } from "./test-rosters";
-import type { RosterFixture, RosterQualification, RosterShift } from "./test-rosters";
+import type { RosterFixture } from "./test-rosters";
 
 const HOUR_MS = 3_600_000;
 const EXPORTED_AT_MS = Date.parse(SAMPLE_EXPORTED_AT);
@@ -1230,29 +1230,31 @@ describe("qualification entries and shift unit and role (W8)", () => {
     },
   ] as const;
 
+  /** What the two helpers below need of a roster; the other fields pass through at run time. */
+  interface LooseRoster {
+    readonly operators: readonly { readonly employeeNumber: string }[];
+    readonly shifts: readonly { readonly shiftId: string }[];
+  }
+
   /** `owner`'s qualifications replaced by `entries`, which need not be well formed. */
-  function withEntries(roster: RosterFixture, owner: string, entries: unknown[]): RosterFixture {
+  function withEntries(roster: LooseRoster, owner: string, entries: unknown[]): LooseRoster {
     return {
       ...roster,
       operators: roster.operators.map((operator) =>
-        operator.employeeNumber === owner
-          ? { ...operator, qualifications: entries as RosterQualification[] }
-          : operator,
+        operator.employeeNumber === owner ? { ...operator, qualifications: entries } : operator,
       ),
     };
   }
 
   /** The shift `shiftId` with `patch` laid over it, which need not be well formed. */
   function withShiftPatch(
-    roster: RosterFixture,
+    roster: LooseRoster,
     shiftId: string,
     patch: Record<string, unknown>,
-  ): RosterFixture {
+  ): LooseRoster {
     return {
       ...roster,
-      shifts: roster.shifts.map((shift) =>
-        shift.shiftId === shiftId ? ({ ...shift, ...patch } as RosterShift) : shift,
-      ),
+      shifts: roster.shifts.map((shift) => (shift.shiftId === shiftId ? { ...shift, ...patch } : shift)),
     };
   }
 
@@ -1455,19 +1457,22 @@ describe("qualification entries and shift unit and role (W8)", () => {
 
   describe("mixed errors", () => {
     // Every group of the W8 reasons and the groups around them, written out of order.
-    function mixedRoster(): RosterFixture {
-      let roster = withShiftPatch(base, GIVE_OTHER_SHIFT_ID, { start: "2027-03-14T02:30" });
+    function mixedRoster(): LooseRoster {
+      let roster = withShiftPatch(
+        setQualifications(base, GIVE_OWNER, undefined),
+        GIVE_OTHER_SHIFT_ID,
+        { start: "2027-03-14T02:30" },
+      );
       roster = withShiftPatch(roster, TAKE_OTHER_SHIFT_ID, { end: "garbage", role: null });
       roster = withShiftPatch(roster, GIVE_SHIFT_ID, { unit: 3 });
       roster = withShiftPatch(roster, TAKE_SHIFT_ID, {
         start: "2027-03-25T06:00",
         end: "2027-03-25T18:00",
       });
-      roster = withEntries(roster, TAKE_OWNER, [
+      return withEntries(roster, TAKE_OWNER, [
         { ...GOOD_ENTRY, unit: { employeeNumber: GIVE_OWNER, name: "Alex Example" } },
         "x",
       ]);
-      return setQualifications(roster, GIVE_OWNER, undefined);
     }
 
     test("qualification entry reasons follow the qualifications-missing reasons; shift unit and role reasons follow shift-time-malformed and precede the horizon reasons", () => {
@@ -1530,7 +1535,7 @@ describe("qualification entries and shift unit and role (W8)", () => {
       for (const identifier of [GIVE_OWNER, TAKE_OWNER, BYSTANDER, "Alex Example", "Blair Sample", "Casey Placeholder"]) {
         expect(text).not.toContain(identifier);
       }
-      expect(Object.keys(JSON.parse(text) as Record<string, unknown>[]).length).toBeGreaterThan(0);
+      expect(reasonsOf(check(mixedRoster(), FRESH_NOW)).length).toBeGreaterThan(0);
     });
 
     test("no W8 reason has a field other than its documented shape", () => {

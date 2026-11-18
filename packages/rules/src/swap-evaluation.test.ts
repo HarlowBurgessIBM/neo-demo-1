@@ -259,6 +259,30 @@ describe("§ 3.1 off-duty boundary (criterion 3)", () => {
       },
     ]);
   });
+
+  test("property: for any rest of 0 to 1,500 min the give owner has a finding exactly when it is under 660, with its length as hours and minutes", () => {
+    fc.assert(
+      fc.property(
+        fc.oneof(fc.integer({ min: 0, max: 1500 }), fc.integer({ min: 655, max: 665 })),
+        (restMinutes) => {
+          const [give, take] = evaluated(restRoster(restMinutes));
+          expect(offDutyFindings(take)).toEqual([]);
+          const findings = offDutyFindings(give);
+          if (restMinutes < 660) {
+            expect(findings).toHaveLength(1);
+            expect(findings[0]).toMatchObject({
+              code: "off-duty-under-minimum",
+              hours: Math.floor(restMinutes / 60),
+              minutes: restMinutes % 60,
+            });
+          } else {
+            expect(findings).toEqual([]);
+          }
+        },
+      ),
+      { numRuns: 300 },
+    );
+  });
 });
 
 describe("§ 3.3 qualification (criterion 4)", () => {
@@ -365,6 +389,47 @@ describe("§ 3.3 qualification (criterion 4)", () => {
       ]);
       expect(evaluated(roster)[index].findings).toEqual([]);
     });
+  });
+
+  test("property: for any validThrough the shift has an expiry finding exactly when validThrough is before its start date", () => {
+    const startDate = fc.integer({ min: 0, max: 24 }).map((days) => plusDays("2027-03-02", days));
+    const offsetFromStart = fc.integer({ min: -3, max: 3 });
+    const farOffset = fc.integer({ min: -60, max: 60 });
+    fc.assert(
+      fc.property(
+        fc.constantFrom(...parties),
+        startDate,
+        fc.oneof(offsetFromStart, farOffset),
+        ({ owner, index, takenShiftId }, start, offset) => {
+          const validThrough = plusDays(start, offset);
+          const roster = rosterOf([
+            makeShift(GIVE_SHIFT_ID, GIVE_OWNER, `${start}T06:00`, `${start}T18:00`),
+            makeShift(TAKE_SHIFT_ID, TAKE_OWNER, `${start}T06:00`, `${start}T18:00`),
+          ]);
+          const result = evaluated(
+            setQualifications(roster, owner, [{ unit: "CDU", role: "CONSOLE", validThrough }]),
+          );
+          const findings = qualificationFindings(result[index]);
+          if (validThrough < start) {
+            expect(findings).toStrictEqual([
+              {
+                rule: "3.3",
+                code: "qualification-expired",
+                changedBySwap: true,
+                shiftId: takenShiftId,
+                unit: "CDU",
+                role: "CONSOLE",
+                shiftStartDate: start,
+                validThrough,
+              },
+            ]);
+          } else {
+            expect(findings).toEqual([]);
+          }
+        },
+      ),
+      { numRuns: 300 },
+    );
   });
 });
 
@@ -968,6 +1033,7 @@ describe("evaluateSwap robustness properties", () => {
 
   test("never throws on a roster of the right shape with fields now and then replaced, and what it returns is well formed", () => {
     let evaluatedCount = 0;
+    // Seeded, so the draws and the evaluatedCount guard below are the same on every run.
     fc.assert(
       fc.property(fuzzRoster, ({ shifts: [give, take, others], operators }) => {
         const roster = { ...buildRoster(), shifts: [give, take, ...others], operators };
@@ -994,7 +1060,7 @@ describe("evaluateSwap robustness properties", () => {
           expect(rules).toEqual([...rules].sort());
         }
       }),
-      { numRuns: 1000 },
+      { numRuns: 1000, seed: 20270307 },
     );
     expect(evaluatedCount).toBeGreaterThan(0);
   });
