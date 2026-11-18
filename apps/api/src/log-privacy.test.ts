@@ -4,21 +4,42 @@ import path from "node:path";
 import type { FastifyInstance, InjectOptions, LightMyRequestResponse, RouteOptions } from "fastify";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { buildApp, type BuildAppOptions } from "./app";
-import { fixedNow, headersFor, readSampleRoster, readSampleRosterRaw, SAMPLE_NOW_ISO } from "./test-support";
+import type { CannotBeApprovedBody } from "./swap-result";
+import {
+  failListingRoster,
+  fixedNow,
+  headersFor,
+  readSampleRoster,
+  readSampleRosterRaw,
+  SAMPLE_NOW_ISO,
+  STEP_1,
+  STEP_2,
+  STEP_3,
+  STEP_4,
+  STEP_6,
+  unchangedShiftQualificationRoster,
+  type SwapPick,
+} from "./test-support";
 
 // C13 and NFR-PRIV-001: a log-capture harness over every route, with a positive control, finds
 // zero employee names or numbers in log output. It also covers the swap-check gate outcomes
-// (Step 7, ADD-3 and the malformed-roster fixtures) and the roster-unavailable 503.
+// (Step 7, ADD-3 and the malformed-roster fixtures), the cannot-be-approved outcomes (Steps 3, 4
+// and 6, the fail-listing fixture and the unchanged-shift § 3.3 fixture) and the
+// roster-unavailable 503.
 
 const MAYA = "104417";
 const LUIS = "102286";
 const RENEE = "100231";
 const NOT_ON_ROSTER = "999999";
 
-const STEP_1 = { giveShiftId: "CDU-CON1-0318-N", takeShiftId: "CDU-CON1-0319-N" };
+/** The request body for a pick. */
+function payloadOf(pick: SwapPick): { giveShiftId: string; takeShiftId: string } {
+  return { giveShiftId: pick.give, takeShiftId: pick.take };
+}
+
 const STEP_8 = { giveShiftId: "CDU-CON1-0318-N", takeShiftId: "FCC-CON1-0318-D" };
 /** Step 7's pick is the same pair as Step 1: only the clock differs. */
-const STEP_7 = STEP_1;
+const STEP_7 = payloadOf(STEP_1);
 const STEP_7_NOW_ISO = "2027-03-08T12:00:00Z";
 const ADD_3 = { giveShiftId: "CDU-FLD1-0318-D", takeShiftId: "CDU-CON1-0326-D" };
 const ADD_3_CALLER = "108529";
@@ -190,6 +211,34 @@ describe("C13: log privacy across every route (NFR-PRIV-001)", () => {
     expect(response.json<{ outcome?: unknown }>().outcome).toBe("cannot-determine");
   }
 
+  /**
+   * POST /api/swap-checks as the pick's caller; expects 200 `cannot-be-approved` with exactly the
+   * `expected` findings, in employee order (give-shift-owner, then take-shift-owner). The
+   * assertion keeps a scenario from passing the privacy scan on a response that is not the one
+   * it is meant to exercise, such as a 501.
+   */
+  async function expectCannotBeApproved(
+    app: FastifyInstance,
+    pick: SwapPick,
+    expected: { party: string; rule: string; changedBySwap: boolean }[],
+  ): Promise<void> {
+    const response = await call(
+      app,
+      { method: "POST", url: "/api/swap-checks", headers: headersFor(pick.caller), payload: payloadOf(pick) },
+      200,
+    );
+    const body = response.json<CannotBeApprovedBody>();
+    expect(body.outcome).toBe("cannot-be-approved");
+    const found = body.employees.flatMap((employee) =>
+      employee.findings.map((finding) => ({
+        party: employee.party,
+        rule: finding.rule,
+        changedBySwap: finding.changedBySwap,
+      })),
+    );
+    expect(found).toEqual(expected);
+  }
+
   async function expectRosterUnavailable(app: FastifyInstance, options: InjectOptions): Promise<void> {
     const response = await call(app, options, 503);
     expect(response.json<{ code?: unknown }>().code).toBe("roster-unavailable");
@@ -200,10 +249,48 @@ describe("C13: log privacy across every route (NFR-PRIV-001)", () => {
     method: "POST",
     url: "/api/swap-checks",
     headers: headersFor(MAYA),
-    payload: STEP_1,
+    payload: payloadOf(STEP_1),
   };
 
   const scenarios: Scenario[] = [
+    {
+      name: "Step 3: a § 3.1 finding on the take shift owner",
+      options: {},
+      nowIso: SAMPLE_NOW_ISO,
+      run: (app) =>
+        expectCannotBeApproved(app, STEP_3, [{ party: "take-shift-owner", rule: "3.1", changedBySwap: true }]),
+    },
+    {
+      name: "Step 4: a § 3.1 finding on the give shift owner across the clock change",
+      options: {},
+      nowIso: SAMPLE_NOW_ISO,
+      run: (app) =>
+        expectCannotBeApproved(app, STEP_4, [{ party: "give-shift-owner", rule: "3.1", changedBySwap: true }]),
+    },
+    {
+      name: "Step 6: a § 3.3 finding on the give shift owner",
+      options: {},
+      nowIso: SAMPLE_NOW_ISO,
+      run: (app) =>
+        expectCannotBeApproved(app, STEP_6, [{ party: "give-shift-owner", rule: "3.3", changedBySwap: true }]),
+    },
+    {
+      name: "fail-listing roster: a § 3.1 finding on the take shift owner and a § 3.3 finding on the give shift owner",
+      options: { roster: failListingRoster() },
+      nowIso: SAMPLE_NOW_ISO,
+      run: (app) =>
+        expectCannotBeApproved(app, STEP_6, [
+          { party: "give-shift-owner", rule: "3.3", changedBySwap: true },
+          { party: "take-shift-owner", rule: "3.1", changedBySwap: true },
+        ]),
+    },
+    {
+      name: "unchanged-shift § 3.3 roster: a finding on a shift the swap did not touch",
+      options: { roster: unchangedShiftQualificationRoster() },
+      nowIso: SAMPLE_NOW_ISO,
+      run: (app) =>
+        expectCannotBeApproved(app, STEP_2, [{ party: "take-shift-owner", rule: "3.3", changedBySwap: false }]),
+    },
     {
       name: "Step 7: the clock is a day after the export",
       options: {},
@@ -317,12 +404,12 @@ describe("C13: log privacy across every route (NFR-PRIV-001)", () => {
     "POST /api/swap-checks": async (app) => {
       const post = (payload: object, headers: Record<string, string | string[]>, expected: number) =>
         call(app, { method: "POST", url: "/api/swap-checks", headers, payload }, expected);
-      await post(STEP_1, headersFor(MAYA), 501);
+      await post(payloadOf(STEP_1), headersFor(MAYA), 501);
       await post(STEP_8, headersFor(MAYA), 422);
       await post({ giveShiftId: "CDU-CON1-0319-N", takeShiftId: "CDU-CON1-0316-D" }, headersFor(MAYA), 403);
       await post({ giveShiftId: "CDU-CON1-0318-N", takeShiftId: "CDU-CON1-9999-N" }, headersFor(MAYA), 422);
       await post({ giveShiftId: {} }, headersFor(MAYA), 400);
-      await post(STEP_1, { "x-employee-number": [MAYA, MAYA], "x-roles": "operator" }, 401);
+      await post(payloadOf(STEP_1), { "x-employee-number": [MAYA, MAYA], "x-roles": "operator" }, 401);
     },
     "GET /api/dev/users": async (app) => {
       await call(app, { method: "GET", url: "/api/dev/users" }, 200);
@@ -399,6 +486,16 @@ describe("C13: log privacy across every route (NFR-PRIV-001)", () => {
     expect(scenarioApps).toHaveLength(scenarios.length);
     expect(scenarioCapture.lines.length).toBeGreaterThan(0);
     expect(registered.has("POST /api/swap-checks")).toBe(true);
+  });
+
+  test("the scenarios include Steps 3, 4 and 6, the fail-listing roster and the unchanged-shift § 3.3 roster", () => {
+    const names = scenarios.map((scenario) => scenario.name);
+    for (const prefix of ["Step 3:", "Step 4:", "Step 6:", "fail-listing roster:", "unchanged-shift § 3.3 roster:"]) {
+      expect(
+        names.some((name) => name.startsWith(prefix)),
+        `no scenario starts with "${prefix}"`,
+      ).toBe(true);
+    }
   });
 
   test("the unavailable roster path and its basename appear in no captured log line", () => {
