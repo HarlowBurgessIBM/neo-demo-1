@@ -6,6 +6,7 @@ import type {
   Finding,
   OffDutyFinding,
   QualificationFinding,
+  SevenDayHoursFinding,
   SevenDayWindow,
   SwapEvaluation,
 } from "./swap-evaluation";
@@ -98,6 +99,99 @@ function offDutyFindings(employee: EmployeeEvaluation): OffDutyFinding[] {
 
 function qualificationFindings(employee: EmployeeEvaluation): QualificationFinding[] {
   return employee.findings.filter(isQualification);
+}
+
+function isSevenDay(finding: Finding): finding is SevenDayHoursFinding {
+  return finding.rule === "3.2";
+}
+
+function sevenDayFindings(employee: EmployeeEvaluation): SevenDayHoursFinding[] {
+  return employee.findings.filter(isSevenDay);
+}
+
+/** § 3.2 maximum, written out here so the tests do not depend on the code's constant. */
+const MAXIMUM_WINDOW_MINUTES = 72 * 60;
+const DAY_MS = 86_400_000;
+
+function totalMinutes(amount: { hours: number; minutes: number }): number {
+  return amount.hours * 60 + amount.minutes;
+}
+
+/** Number of calendar dates from `from` to `to` inclusive. Independent of site-time.ts. */
+function daysInclusive(from: string, to: string): number {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS) + 1;
+}
+
+/** `wall` (YYYY-MM-DDTHH:mm) as whole minutes on a plain calendar, with no time zone. */
+function wallMinutes(wall: string): number {
+  return Date.parse(`${wall}:00Z`) / MINUTE_MS;
+}
+
+/** The `from`/`to` of every seven-date window that fits inside `coverage`, in date order. */
+function expectedWindowDates(coverage: { from: string; to: string }): [string, string][] {
+  const count = Math.max(0, daysInclusive(coverage.from, coverage.to) - 6);
+  return Array.from({ length: count }, (_, i): [string, string] => [
+    plusDays(coverage.from, i),
+    plusDays(coverage.from, i + 6),
+  ]);
+}
+
+/**
+ * The minutes each window starting at `coverageFrom`, `coverageFrom`+1 … (`count` of them)
+ * should hold, given `contributions` of [start date, elapsed minutes].
+ */
+function expectedTotals(
+  coverageFrom: string,
+  count: number,
+  contributions: readonly [string, number][],
+): number[] {
+  return Array.from({ length: count }, (_, i) => {
+    const from = plusDays(coverageFrom, i);
+    const to = plusDays(from, 6);
+    return contributions
+      .filter(([date]) => from <= date && date <= to)
+      .reduce((sum, [, minutes]) => sum + minutes, 0);
+  });
+}
+
+function windowTotals(employee: EmployeeEvaluation): number[] {
+  return employee.windows.map(totalMinutes);
+}
+
+function windowStarting(employee: EmployeeEvaluation, from: string): SevenDayWindow | undefined {
+  return employee.windows.find((window) => window.from === from);
+}
+
+/** Checks the shape of an employee's windows and § 3.2 findings against the coverage. */
+function expectWellFormedWindows(
+  employee: EmployeeEvaluation,
+  coverage: { from: string; to: string },
+): void {
+  const { windows } = employee;
+  expect(windows.map(({ from, to }) => [from, to])).toEqual(expectedWindowDates(coverage));
+  for (const window of windows) {
+    expect(Number.isInteger(window.hours) && window.hours >= 0).toBe(true);
+    expect(Number.isInteger(window.minutes) && window.minutes >= 0 && window.minutes <= 59).toBe(
+      true,
+    );
+    expect(typeof window.changedBySwap).toBe("boolean");
+  }
+  const findings = sevenDayFindings(employee);
+  // One finding for each window over the maximum, in window order, and no others.
+  expect(findings.map(({ from, to }) => [from, to])).toEqual(
+    windows.filter((window) => totalMinutes(window) > MAXIMUM_WINDOW_MINUTES).map(({ from, to }) => [from, to]),
+  );
+  for (const finding of findings) {
+    expect(finding.maximumHours).toBe(72);
+    expect(totalMinutes(finding)).toBeGreaterThan(MAXIMUM_WINDOW_MINUTES);
+    expect(windows.find((window) => window.from === finding.from && window.to === finding.to)).toEqual({
+      from: finding.from,
+      to: finding.to,
+      hours: finding.hours,
+      minutes: finding.minutes,
+      changedBySwap: finding.changedBySwap,
+    });
+  }
 }
 
 /** A shift of an owner that gives no § 3.1 or § 3.3 trouble on its own. */
@@ -866,6 +960,495 @@ describe("ordering", () => {
   });
 });
 
+describe("§ 3.2 seven-day hours", () => {
+  const runs = { numRuns: 300 };
+
+  // No clock change anywhere near this date in America/Chicago.
+  const QUIET_FROM = "2027-05-03";
+
+  /**
+   * A roster whose coverage is `days` dates from QUIET_FROM. The swapped shifts start on its
+   * first and (if there is one) second date, 12 h each.
+   */
+  function coverageRoster(days: number): RosterFixture {
+    const second = days > 1 ? plusDays(QUIET_FROM, 1) : QUIET_FROM;
+    return withCoverage(
+      rosterOf([
+        makeShift(GIVE_SHIFT_ID, GIVE_OWNER, `${QUIET_FROM}T06:00`, `${QUIET_FROM}T18:00`),
+        makeShift(TAKE_SHIFT_ID, TAKE_OWNER, `${second}T06:00`, `${second}T18:00`),
+      ]),
+      QUIET_FROM,
+      plusDays(QUIET_FROM, days - 1),
+    );
+  }
+
+  /**
+   * The give owner's schedule after the swap: six shifts starting 06:00 on 1 to 6 Mar with the
+   * given `durations` (minutes), and the shift taken on 24 Mar. The shift given starts on
+   * `givenDate`.
+   */
+  function sixShiftRoster(durations: readonly number[], givenDate: string): RosterFixture {
+    return rosterOf([
+      ...durations.map((duration, i) => {
+        const start = `2027-03-0${i + 1}T06:00`;
+        return makeShift(`A-D${i + 1}`, GIVE_OWNER, start, wallPlus(start, duration));
+      }),
+      makeShift(GIVE_SHIFT_ID, GIVE_OWNER, `${givenDate}T06:00`, `${givenDate}T18:00`),
+      makeShift(TAKE_SHIFT_ID, TAKE_OWNER, "2027-03-24T06:00", "2027-03-24T18:00"),
+    ]);
+  }
+
+  describe("windows in coverage (criterion 1)", () => {
+    test("coverage 1 to 28 Mar has 22 windows, starting 1 to 22 Mar, the last ending on coverage.to", () => {
+      for (const employee of evaluated(rosterOf([GIVE_DEFAULT, TAKE_DEFAULT]))) {
+        expect(employee.windows).toHaveLength(22);
+        expect(employee.windows.map((window) => window.from)).toEqual(
+          Array.from({ length: 22 }, (_, i) => plusDays("2027-03-01", i)),
+        );
+        for (const window of employee.windows) {
+          expect(window.to).toBe(plusDays(window.from, 6));
+        }
+        expect(employee.windows[0]?.from).toBe("2027-03-01");
+        expect(employee.windows[21]?.from).toBe("2027-03-22");
+        expect(employee.windows[21]?.to).toBe(COVERAGE_TO);
+      }
+    });
+
+    test.each([
+      [1, 0],
+      [6, 0],
+      [7, 1],
+      [8, 2],
+    ])("coverage of %i dates has %i windows", (days, count) => {
+      for (const employee of evaluated(coverageRoster(days))) {
+        expect(employee.windows).toHaveLength(count);
+      }
+    });
+
+    test("coverage shorter than seven dates gives empty windows and no § 3.2 finding", () => {
+      for (const employee of evaluated(coverageRoster(6))) {
+        expect(employee.windows).toEqual([]);
+        expect(sevenDayFindings(employee)).toEqual([]);
+      }
+    });
+
+    test("a coverage of exactly seven dates has one window, the whole coverage", () => {
+      for (const employee of evaluated(coverageRoster(7))) {
+        expect(employee.windows).toEqual([
+          {
+            from: QUIET_FROM,
+            to: plusDays(QUIET_FROM, 6),
+            hours: 12,
+            minutes: 0,
+            changedBySwap: true,
+          },
+        ]);
+      }
+    });
+
+    test("property: n dates of coverage give max(0, n − 6) consecutive windows inside coverage, holding the right hours", () => {
+      fc.assert(
+        fc.property(fc.integer({ min: 1, max: 45 }), (days) => {
+          const roster = coverageRoster(days);
+          const [give, take] = evaluated(roster);
+          const count = Math.max(0, days - 6);
+          const second = days > 1 ? plusDays(QUIET_FROM, 1) : QUIET_FROM;
+          for (const employee of [give, take]) {
+            expect(employee.windows).toHaveLength(count);
+            expect(employee.windows.map(({ from, to }) => [from, to])).toEqual(
+              Array.from({ length: count }, (_, i) => [
+                plusDays(QUIET_FROM, i),
+                plusDays(QUIET_FROM, i + 6),
+              ]),
+            );
+            for (const window of employee.windows) {
+              expect(window.from >= roster.coverage.from).toBe(true);
+              expect(window.to <= roster.coverage.to).toBe(true);
+            }
+            if (count > 0) {
+              expect(employee.windows[count - 1]?.to).toBe(roster.coverage.to);
+            }
+          }
+          // The give owner ends with the shift starting on `second`; the take owner with the first.
+          expect(windowTotals(give)).toEqual(expectedTotals(QUIET_FROM, count, [[second, 720]]));
+          expect(windowTotals(take)).toEqual(expectedTotals(QUIET_FROM, count, [[QUIET_FROM, 720]]));
+        }),
+        runs,
+      );
+    });
+  });
+
+  describe("hours count wholly on the site-local start date (criterion 2)", () => {
+    test("a night shift 6 Mar 18:00 to 7 Mar 06:00 is 12 h in the windows holding 6 Mar and 0 h in the window starting 7 Mar", () => {
+      const roster = giveOwnerRoster(
+        makeShift(TAKE_SHIFT_ID, TAKE_OWNER, "2027-03-24T06:00", "2027-03-24T18:00"),
+        [makeShift("A-NIGHT", GIVE_OWNER, "2027-03-06T18:00", "2027-03-07T06:00")],
+      );
+      const [give] = evaluated(roster);
+      // Windows starting 1 to 6 Mar contain 6 Mar; the take (24 Mar) is in the windows starting 18 to 22 Mar.
+      for (const from of ["2027-03-01", "2027-03-02", "2027-03-03", "2027-03-04", "2027-03-05", "2027-03-06"]) {
+        expect(windowStarting(give, from)).toMatchObject({ hours: 12, minutes: 0 });
+      }
+      expect(windowStarting(give, "2027-03-07")).toMatchObject({ hours: 0, minutes: 0 });
+      expect(windowTotals(give)).toEqual(
+        expectedTotals(COVERAGE_FROM, 22, [
+          ["2027-03-06", 720],
+          ["2027-03-24", 720],
+        ]),
+      );
+    });
+
+    // The oracle is plain calendar arithmetic on the wall-clock strings. In UTC wall and real
+    // time are the same. In America/Chicago the only clock change in 1 to 28 Mar 2027 is
+    // 14 Mar 02:00 → 03:00 (CST, UTC−6, to CDT, UTC−5), so a shift that starts before 02:00
+    // and ends at or after 03:00 on that date has one wall hour that never happened. Shifts
+    // that start or end inside the skipped hour are not generated (the engine rejects them).
+    const GAP_START = "2027-03-14T02:00";
+    const GAP_END = "2027-03-14T03:00";
+    const inGap = (wall: string): boolean => wall >= GAP_START && wall < GAP_END;
+    const MARCH_START = "2027-03-01T00:00";
+
+    const shiftSpec = fc
+      .record({
+        startMinute: fc.integer({ min: 0, max: 28 * 24 * 60 - 1 }),
+        duration: fc.integer({ min: 1, max: 20 * 60 }),
+      })
+      .filter(
+        ({ startMinute, duration }) =>
+          !inGap(wallPlus(MARCH_START, startMinute)) &&
+          !inGap(wallPlus(MARCH_START, startMinute + duration)),
+      );
+    type ShiftSpec = { startMinute: number; duration: number };
+
+    function shiftOf(shiftId: string, owner: string, spec: ShiftSpec): RosterShift {
+      const start = wallPlus(MARCH_START, spec.startMinute);
+      return makeShift(shiftId, owner, start, wallPlus(start, spec.duration));
+    }
+
+    /** [start date, elapsed minutes] by calendar arithmetic, less the lost hour if the shift spans the gap. */
+    function oracleContribution(shift: RosterShift, zoneHasGap: boolean): [string, number] {
+      const spansGap = zoneHasGap && shift.start < GAP_START && shift.end >= GAP_END;
+      const minutes = wallMinutes(shift.end) - wallMinutes(shift.start) - (spansGap ? 60 : 0);
+      return [shift.start.slice(0, 10), minutes];
+    }
+
+    test.each([
+      ["UTC", false],
+      ["America/Chicago", true],
+    ])(
+      "property in %s: the windows starting 1, 8, 15 and 22 Mar sum to the hours of the shifts starting in coverage",
+      (zone, zoneHasGap) => {
+        fc.assert(
+          fc.property(
+            shiftSpec,
+            shiftSpec,
+            fc.array(
+              fc.record({
+                owner: fc.constantFrom(GIVE_OWNER, TAKE_OWNER, BYSTANDER),
+                spec: shiftSpec,
+              }),
+              { maxLength: 12 },
+            ),
+            (giveSpec, takeSpec, extras) => {
+              const give = shiftOf(GIVE_SHIFT_ID, GIVE_OWNER, giveSpec);
+              const take = shiftOf(TAKE_SHIFT_ID, TAKE_OWNER, takeSpec);
+              const others = extras.map(({ owner, spec }, i) => shiftOf(`X${i}`, owner, spec));
+              const roster = {
+                ...rosterOf([give, take, ...others]),
+                site: { name: "Test Harbor Works", timeZone: zone },
+              };
+              const [giveEmployee, takeEmployee] = evaluated(roster);
+              // After the swap each owner has their other shifts plus the shift they took.
+              const schedules: [EmployeeEvaluation, RosterShift[]][] = [
+                [giveEmployee, [...others.filter((s) => s.employeeNumber === GIVE_OWNER), take]],
+                [takeEmployee, [...others.filter((s) => s.employeeNumber === TAKE_OWNER), give]],
+              ];
+              const starts = [0, 7, 14, 21].map((offset) => plusDays(COVERAGE_FROM, offset));
+              for (const [employee, schedule] of schedules) {
+                const contributions = schedule.map((shift) => oracleContribution(shift, zoneHasGap));
+                const observed = starts.map((from) => {
+                  const window = windowStarting(employee, from);
+                  return window === undefined ? undefined : totalMinutes(window);
+                });
+                expect(observed).toEqual(
+                  expectedTotals(COVERAGE_FROM, 22, contributions).filter((_, i) => i % 7 === 0),
+                );
+                const all = contributions.reduce((sum, [, minutes]) => sum + minutes, 0);
+                expect(observed.reduce<number>((sum, minutes) => sum + (minutes ?? 0), 0)).toBe(all);
+              }
+            },
+          ),
+          runs,
+        );
+      },
+    );
+  });
+
+  describe("the 72 h boundary (criterion 3)", () => {
+    const twelveHours = [720, 720, 720, 720, 720, 720];
+
+    test("six 12 h shifts in one window are 72 h 0 m and no § 3.2 finding", () => {
+      const [give, take] = evaluated(sixShiftRoster(twelveHours, "2027-03-07"));
+      expect(windowStarting(give, "2027-03-01")).toEqual({
+        from: "2027-03-01",
+        to: "2027-03-07",
+        hours: 72,
+        minutes: 0,
+        changedBySwap: true,
+      });
+      expect(give.findings).toEqual([]);
+      expect(take.findings).toEqual([]);
+    });
+
+    test("one of them 12 h 1 m is 72 h 1 m and exactly one § 3.2 finding", () => {
+      const [give, take] = evaluated(sixShiftRoster([720, 720, 720, 720, 720, 721], "2027-03-07"));
+      expect(windowStarting(give, "2027-03-01")).toEqual({
+        from: "2027-03-01",
+        to: "2027-03-07",
+        hours: 72,
+        minutes: 1,
+        changedBySwap: true,
+      });
+      expect(give.findings).toEqual([
+        {
+          rule: "3.2",
+          code: "seven-day-hours-over-maximum",
+          changedBySwap: true,
+          maximumHours: 72,
+          from: "2027-03-01",
+          to: "2027-03-07",
+          hours: 72,
+          minutes: 1,
+        },
+      ]);
+      expect(take.findings).toEqual([]);
+    });
+
+    test("the finding's keys are in the documented order", () => {
+      const [give] = evaluated(sixShiftRoster([720, 720, 720, 720, 720, 721], "2027-03-07"));
+      expect(Object.keys(give.findings[0] ?? {})).toEqual([
+        "rule",
+        "code",
+        "changedBySwap",
+        "maximumHours",
+        "from",
+        "to",
+        "hours",
+        "minutes",
+      ]);
+    });
+
+    test("property: for a window total of 4200 to 4440 minutes there is a finding exactly when it is over 4320", () => {
+      // The extra choices put the boundary and its neighbours in every run.
+      const total = fc.oneof(
+        fc.integer({ min: 4200, max: 4440 }),
+        fc.constantFrom(4319, 4320, 4321),
+      );
+      // Five shifts of 10 to 13 h and a sixth that makes up the total (3 h 20 m to 24 h).
+      const firstFive = fc.array(fc.integer({ min: 600, max: 800 }), { minLength: 5, maxLength: 5 });
+      fc.assert(
+        fc.property(total, firstFive, (minutes, five) => {
+          const last = minutes - five.reduce((sum, duration) => sum + duration, 0);
+          const [give] = evaluated(sixShiftRoster([...five, last], "2027-03-07"));
+          const window = windowStarting(give, "2027-03-01");
+          expect(window && totalMinutes(window)).toBe(minutes);
+          const findings = sevenDayFindings(give).filter((finding) => finding.from === "2027-03-01");
+          if (minutes > 4320) {
+            expect(findings).toEqual([
+              {
+                rule: "3.2",
+                code: "seven-day-hours-over-maximum",
+                changedBySwap: true,
+                maximumHours: 72,
+                from: "2027-03-01",
+                to: "2027-03-07",
+                hours: Math.floor(minutes / 60),
+                minutes: minutes % 60,
+              },
+            ]);
+          } else {
+            expect(findings).toEqual([]);
+          }
+        }),
+        runs,
+      );
+    });
+  });
+
+  describe("DST hours (criterion 4)", () => {
+    function nightRoster(nightDate: string): RosterFixture {
+      return rosterOf([
+        makeShift("A-NIGHT", GIVE_OWNER, `${nightDate}T18:00`, wallPlus(`${nightDate}T18:00`, 720)),
+        makeShift(GIVE_SHIFT_ID, GIVE_OWNER, "2027-03-25T06:00", "2027-03-25T18:00"),
+        makeShift(TAKE_SHIFT_ID, TAKE_OWNER, "2027-03-26T06:00", "2027-03-26T18:00"),
+      ]);
+    }
+
+    test("in America/Chicago the 13 Mar 18:00 to 14 Mar 06:00 shift is 11 h in each window holding 13 Mar", () => {
+      const [give] = evaluated(nightRoster("2027-03-13"));
+      for (const from of ["2027-03-07", "2027-03-08", "2027-03-09", "2027-03-10", "2027-03-11", "2027-03-12", "2027-03-13"]) {
+        expect(windowStarting(give, from)).toMatchObject({ hours: 11, minutes: 0 });
+      }
+      expect(windowTotals(give)).toEqual(
+        expectedTotals(COVERAGE_FROM, 22, [
+          ["2027-03-13", 660],
+          ["2027-03-26", 720],
+        ]),
+      );
+    });
+
+    test.each(["2027-03-04", "2027-03-12", "2027-03-14", "2027-03-20"])(
+      "a same-shaped night shift starting %s is 12 h",
+      (nightDate) => {
+        const [give] = evaluated(nightRoster(nightDate));
+        expect(windowTotals(give)).toEqual(
+          expectedTotals(COVERAGE_FROM, 22, [
+            [nightDate, 720],
+            ["2027-03-26", 720],
+          ]),
+        );
+      },
+    );
+  });
+
+  describe("changedBySwap on a window", () => {
+    function swapRoster(givenDate: string, takenDate: string): RosterFixture {
+      return rosterOf([
+        makeShift(GIVE_SHIFT_ID, GIVE_OWNER, `${givenDate}T06:00`, `${givenDate}T18:00`),
+        makeShift(TAKE_SHIFT_ID, TAKE_OWNER, `${takenDate}T06:00`, `${takenDate}T18:00`),
+      ]);
+    }
+
+    test("is true exactly when the window holds the start date of the shift given or taken", () => {
+      const [give, take] = evaluated(swapRoster("2027-03-05", "2027-03-17"));
+      // Windows starting 1 to 5 Mar hold 5 Mar; those starting 11 to 17 Mar hold 17 Mar.
+      const changedStarts = [1, 2, 3, 4, 5, 11, 12, 13, 14, 15, 16, 17].map((day) =>
+        plusDays("2027-03-01", day - 1),
+      );
+      for (const employee of [give, take]) {
+        expect(employee.windows).toHaveLength(22);
+        for (const window of employee.windows) {
+          expect(window.changedBySwap).toBe(changedStarts.includes(window.from));
+        }
+      }
+    });
+
+    test("is true for a window holding only the given shift's date, and for one holding only the taken shift's date", () => {
+      const [give, take] = evaluated(swapRoster("2027-03-02", "2027-03-27"));
+      for (const employee of [give, take]) {
+        expect(windowStarting(employee, "2027-03-01")?.changedBySwap).toBe(true);
+        expect(windowStarting(employee, "2027-03-08")?.changedBySwap).toBe(false);
+        expect(windowStarting(employee, "2027-03-22")?.changedBySwap).toBe(true);
+      }
+    });
+
+    test("property: changedBySwap is (from ≤ g ≤ to) or (from ≤ t ≤ to) for the dates g, t of the shifts given and taken", () => {
+      const offset = fc.integer({ min: 0, max: 27 });
+      fc.assert(
+        fc.property(offset, offset, (givenOffset, takenOffset) => {
+          const g = plusDays(COVERAGE_FROM, givenOffset);
+          const t = plusDays(COVERAGE_FROM, takenOffset);
+          for (const employee of evaluated(swapRoster(g, t))) {
+            expect(employee.windows).toHaveLength(22);
+            for (const { from, to, changedBySwap } of employee.windows) {
+              expect(changedBySwap).toBe((from <= g && g <= to) || (from <= t && t <= to));
+            }
+          }
+        }),
+        runs,
+      );
+    });
+  });
+
+  describe("an existing breach in a window the swap does not change (criterion 6, rules half)", () => {
+    test("is still a § 3.2 finding, with changedBySwap false", () => {
+      // The shift given starts 20 Mar and the one taken 24 Mar, both outside 1 to 7 Mar.
+      const roster = sixShiftRoster([720, 720, 720, 720, 720, 721], "2027-03-20");
+      expect(evaluate(roster).kind).toBe("evaluated");
+      const [give, take] = evaluated(roster);
+      expect(give.findings).toEqual([
+        {
+          rule: "3.2",
+          code: "seven-day-hours-over-maximum",
+          changedBySwap: false,
+          maximumHours: 72,
+          from: "2027-03-01",
+          to: "2027-03-07",
+          hours: 72,
+          minutes: 1,
+        },
+      ]);
+      expect(windowStarting(give, "2027-03-01")?.changedBySwap).toBe(false);
+      expect(take.findings).toEqual([]);
+    });
+  });
+
+  describe("ordering of one employee's findings", () => {
+    // The give owner works twelve hours on each of 1 to 8 Mar (84 h in the windows starting 1 and
+    // 2 Mar), and 12 h then 8 h on 10 Mar after a 4 h rest (80 h in the window starting 4 Mar). Their
+    // 1 Mar shift is in a unit they are not qualified for. The shifts are listed latest first, so
+    // an order taken from the roster would be wrong.
+    const eightDays = [8, 7, 6, 5, 4, 3, 2, 1].map((day) => {
+      const shift = makeShift(
+        `A-D${day}`,
+        GIVE_OWNER,
+        `2027-03-0${day}T06:00`,
+        `2027-03-0${day}T18:00`,
+      );
+      return day === 1 ? { ...shift, unit: "HCU" } : shift;
+    });
+    const roster = rosterOf([
+      makeShift(TAKE_SHIFT_ID, TAKE_OWNER, "2027-03-26T06:00", "2027-03-26T18:00"),
+      makeShift(GIVE_SHIFT_ID, GIVE_OWNER, "2027-03-25T06:00", "2027-03-25T18:00"),
+      makeShift("A-Y", GIVE_OWNER, "2027-03-10T22:00", "2027-03-11T06:00"),
+      makeShift("A-X", GIVE_OWNER, "2027-03-10T06:00", "2027-03-10T18:00"),
+      ...eightDays,
+    ]);
+
+    const over = (from: string, to: string, hours: number) => ({
+      rule: "3.2",
+      code: "seven-day-hours-over-maximum",
+      changedBySwap: false,
+      maximumHours: 72,
+      from,
+      to,
+      hours,
+      minutes: 0,
+    });
+
+    test("§ 3.1, then § 3.2 by window start, then § 3.3", () => {
+      const [give] = evaluated(roster);
+      expect(give.findings).toEqual([
+        {
+          rule: "3.1",
+          code: "off-duty-under-minimum",
+          changedBySwap: false,
+          minimumHours: 11,
+          fromShiftId: "A-X",
+          toShiftId: "A-Y",
+          from: "2027-03-10T18:00",
+          to: "2027-03-10T22:00",
+          hours: 4,
+          minutes: 0,
+        },
+        over("2027-03-01", "2027-03-07", 84),
+        over("2027-03-02", "2027-03-08", 84),
+        over("2027-03-04", "2027-03-10", 80),
+        {
+          rule: "3.3",
+          code: "no-qualification-for-unit-and-role",
+          changedBySwap: false,
+          shiftId: "A-D1",
+          unit: "HCU",
+          role: "CONSOLE",
+          shiftStartDate: "2027-03-01",
+          validThrough: null,
+        },
+      ]);
+    });
+  });
+});
+
 describe("a swap that cannot be evaluated", () => {
   const base = rosterOf([GIVE_DEFAULT, TAKE_DEFAULT]);
 
@@ -1133,9 +1716,10 @@ describe("evaluateSwap robustness properties", () => {
               expect([finding.hours, finding.minutes]).toEqual([0, 0]);
             }
           }
-          // § 3.1 findings come before § 3.3 findings.
+          // § 3.1 findings come before § 3.2 findings, and those before § 3.3 findings.
           const rules = employee.findings.map((finding) => finding.rule);
           expect(rules).toEqual([...rules].sort());
+          expectWellFormedWindows(employee, roster.coverage);
         }
       }),
       { numRuns: 1000, seed: 20270307 },
