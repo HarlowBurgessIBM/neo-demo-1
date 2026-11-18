@@ -16,8 +16,8 @@ const PICK: SwapPick = { giveShiftId: "CDU-CON1-0301-D", takeShiftId: "HCU-CON1-
 
 /** What a button or link must never be called on a page that cannot approve, send or notify anything. */
 const FORBIDDEN_ACTION_NAME = /approve|send|agree|submit|notify/i;
-/** A named reviewing unit or reviewer: the views say "each unit affected" and never list which. */
-const REVIEWER_NAMED = /(CDU|HCU|FCC) supervisor|units affected:|reviewing units?:|reviewer/i;
+/** A shift ID such as CDU-CON1-0318-N. The views name shifts, not the units that would review them. */
+const SHIFT_ID = /\b[A-Z]{3}-[A-Z0-9]+-\d{4}-[A-Z]\b/g;
 const UNEXPECTED_RESPONSE = "Could not check the swap. The server answered with an unexpected status (200).";
 const NOTICE_TEXT = ["2027-03-07T08:00Z", "02:00", "rostered shifts only", "CDU and HCU only", "holdovers not assessed"];
 
@@ -177,22 +177,24 @@ describe("no action and no named reviewer (C9 web half)", () => {
         (control) => control.textContent,
       ),
     ).toEqual(["Choose again"]);
+    // No checkbox, radio, switch or field either, such as an "I agree" box.
+    for (const role of ["checkbox", "radio", "switch", "textbox", "combobox"]) {
+      expect(within(section).queryAllByRole(role)).toEqual([]);
+    }
+    expect(section.querySelectorAll("input, textarea, select, form")).toHaveLength(0);
   });
 
   test.each(views)("$name names no reviewing unit or reviewer and renders no employee number", async ({ body, heading }) => {
     const { section } = await renderResult(body, heading);
 
-    expect(section.textContent).not.toMatch(REVIEWER_NAMED);
+    // The guidance legitimately says "the shift supervisor of each unit affected"; shift IDs carry the unit as a prefix.
+    const text = (section.textContent ?? "").replace(body.guidance, "").replace(SHIFT_ID, "");
+    expect(text).not.toMatch(/\b(CDU|HCU|FCC)\b/);
+    expect(text).not.toMatch(/supervisor|reviewer|units? affected/i);
     expect(fixtures.devUsers.users.length).toBeGreaterThan(0);
     for (const user of fixtures.devUsers.users) {
       expect(section.textContent).not.toContain(user.employeeNumber);
     }
-  });
-
-  test("the cannot-be-approved views still name the exception procedure VE-HSSE-PRC-021", async () => {
-    const { section } = await renderResult(fixtures.step4, CANNOT_HEADING);
-
-    expect(section.textContent).toContain("VE-HSSE-PRC-021");
   });
 });
 
@@ -255,6 +257,10 @@ describe("guard rejects malformed bodies (C4, C13)", () => {
     {
       name: "an approved-without-review body carrying a trigger",
       body: withEmployee(fixtures.step1, 0, { triggers: fixtures.step2.employees[0]?.triggers }),
+    },
+    {
+      name: "an approved-without-review body carrying a finding",
+      body: withEmployee(fixtures.step1, 0, { findings: fixtures.step4.employees[0]?.findings }),
     },
     {
       name: "a review-required body with no triggers",

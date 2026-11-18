@@ -214,6 +214,10 @@ describe("no review wording on a cannot-be-approved view (W4)", () => {
   // headings say none of these words (the guidance cites § 4.4), so the whole region is checked.
   const withTriggers = cases.filter(({ body }) => body.employees.some((employee) => employee.triggers.length > 0));
 
+  test("the fixtures still carry triggers, so the test below has something to leak", () => {
+    expect(withTriggers.length).toBeGreaterThan(0);
+  });
+
   test.each(withTriggers)("$name has triggers in the response and shows no § 4.2, review, supervisor or trigger text", async ({
     body,
   }) => {
