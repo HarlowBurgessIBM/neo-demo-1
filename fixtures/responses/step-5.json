@@ -194,6 +194,38 @@
           "hours": 84,
           "minutes": 0
         }
+      ],
+      "triggers": [
+        {
+          "rule": "4.2(b)",
+          "code": "seven-day-hours-over-review-threshold",
+          "changedBySwap": true,
+          "thresholdHours": 60,
+          "from": "2027-03-14",
+          "to": "2027-03-20",
+          "hours": 72,
+          "minutes": 0
+        },
+        {
+          "rule": "4.2(b)",
+          "code": "seven-day-hours-over-review-threshold",
+          "changedBySwap": true,
+          "thresholdHours": 60,
+          "from": "2027-03-15",
+          "to": "2027-03-21",
+          "hours": 84,
+          "minutes": 0
+        },
+        {
+          "rule": "4.2(b)",
+          "code": "seven-day-hours-over-review-threshold",
+          "changedBySwap": true,
+          "thresholdHours": 60,
+          "from": "2027-03-16",
+          "to": "2027-03-22",
+          "hours": 72,
+          "minutes": 0
+        }
       ]
     },
     {
@@ -373,7 +405,8 @@
           "changedBySwap": false
         }
       ],
-      "findings": []
+      "findings": [],
+      "triggers": []
     }
   ]
 }

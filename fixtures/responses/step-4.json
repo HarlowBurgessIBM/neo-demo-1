@@ -196,6 +196,20 @@
           "hours": 10,
           "minutes": 0
         }
+      ],
+      "triggers": [
+        {
+          "rule": "4.2(a)",
+          "code": "off-duty-under-review-threshold",
+          "changedBySwap": true,
+          "thresholdHours": 12,
+          "fromShiftId": "CDU-CON1-0313-D",
+          "toShiftId": "HCU-CON1-0314-D",
+          "from": "2027-03-13T18:00",
+          "to": "2027-03-14T05:00",
+          "hours": 10,
+          "minutes": 0
+        }
       ]
     },
     {
@@ -375,7 +389,8 @@
           "changedBySwap": false
         }
       ],
-      "findings": []
+      "findings": [],
+      "triggers": []
     }
   ]
 }

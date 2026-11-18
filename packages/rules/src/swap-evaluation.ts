@@ -1,5 +1,8 @@
 // The swap evaluation: the fatigue-policy rules (§ 3.1 off-duty period, § 3.2 seven-day hours,
-// § 3.3 qualification) applied to the schedule each employee would have after the swap.
+// § 3.3 qualification) applied to the schedule each employee would have after the swap, plus the
+// § 4.2 supervisor-review triggers ((a) off-duty under 12 h, (b) over 60 h in a seven-date
+// window), and the classification of the swap: cannot-be-approved (any finding), else
+// review-required (any trigger), else approved-without-review.
 // Pure: no I/O, no clock, no framework. Meant to run after `assessDeterminability` returned
 // `determinable: true`. If a fact the gate guarantees does not hold, it returns
 // `{ kind: "not-evaluable" }` rather than throw. Output carries no employee number.
@@ -35,6 +38,14 @@ const MAXIMUM_WINDOW_HOURS = 72;
 const MAXIMUM_WINDOW_MINUTES = MAXIMUM_WINDOW_HOURS * 60;
 /** The number of consecutive site-local dates in a § 3.2 window. */
 const WINDOW_DAYS = 7;
+
+/** § 4.2(a): an off-duty period under this many hours needs supervisor review. */
+const REVIEW_OFF_DUTY_HOURS = 12;
+const REVIEW_OFF_DUTY_MINUTES = REVIEW_OFF_DUTY_HOURS * 60;
+
+/** § 4.2(b): more than this many hours in a seven-date window needs supervisor review. */
+const REVIEW_WINDOW_HOURS = 60;
+const REVIEW_WINDOW_MINUTES = REVIEW_WINDOW_HOURS * 60;
 
 /** The off-duty period between two consecutive shifts. */
 export interface OffDutyPeriod {
@@ -87,6 +98,31 @@ export interface SevenDayHoursFinding {
   minutes: number;
 }
 
+/** § 4.2(a): an off-duty period under 12 hours. Exactly 12 hours is no trigger. */
+export interface OffDutyReviewTrigger extends OffDutyPeriod {
+  rule: "4.2(a)";
+  code: "off-duty-under-review-threshold";
+  changedBySwap: boolean;
+  thresholdHours: 12;
+  /** Present only when the next shift starts before the previous one ends. */
+  overlap?: true;
+}
+
+/** § 4.2(b): more than 60 hours in one seven-day window. Exactly 60 hours is no trigger. */
+export interface SevenDayReviewTrigger {
+  rule: "4.2(b)";
+  code: "seven-day-hours-over-review-threshold";
+  changedBySwap: boolean;
+  thresholdHours: 60;
+  from: string;
+  to: string;
+  hours: number;
+  /** 0 to 59. */
+  minutes: number;
+}
+
+export type ReviewTrigger = OffDutyReviewTrigger | SevenDayReviewTrigger;
+
 export interface QualificationFinding {
   rule: "3.3";
   code: "qualification-expired" | "no-qualification-for-unit-and-role";
@@ -112,10 +148,15 @@ export interface EmployeeEvaluation {
   /** Every seven-date window fully inside coverage, in date order; empty if coverage is shorter. */
   windows: SevenDayWindow[];
   findings: Finding[];
+  /** § 4.2 supervisor-review triggers: every (a) trigger in schedule order, then every (b). */
+  triggers: ReviewTrigger[];
 }
 
+/** The classification of an evaluated swap; see `classifySwap`. */
+export type SwapOutcome = "cannot-be-approved" | "review-required" | "approved-without-review";
+
 export type SwapEvaluation =
-  | { kind: "evaluated"; employees: [EmployeeEvaluation, EmployeeEvaluation] }
+  | { kind: "evaluated"; outcome: SwapOutcome; employees: [EmployeeEvaluation, EmployeeEvaluation] }
   | { kind: "not-evaluable" };
 
 interface Context {
@@ -340,6 +381,24 @@ function offDutyPeriod(
   };
 }
 
+/**
+ * True when the swap changed this rest: it touches the shift taken, or the shift given sat
+ * between these two neighbours before the swap, in start order (start instant, then roster
+ * index, the order the schedule is sorted in).
+ */
+function restChangedBySwap(
+  previous: ScheduleShift,
+  next: ScheduleShift,
+  given: ScheduleShift,
+  taken: ScheduleShift,
+): boolean {
+  return (
+    previous === taken ||
+    next === taken ||
+    (!startsBefore(given, previous) && startsBefore(given, next))
+  );
+}
+
 interface Swapper {
   party: Party;
   /** Roster employee number of this party. Never leaves this module. */
@@ -391,6 +450,7 @@ function evaluateEmployee(
   // end. A shift nested inside its predecessor (starts after it, ends before it) is unspecified
   // by the standard; the rest after it is still measured from the nested shift's own end.
   const offDutyFindings: OffDutyFinding[] = [];
+  const offDutyTriggers: OffDutyReviewTrigger[] = [];
   const rests: OffDutyPeriod[] = [];
   for (let i = 0; i + 1 < schedule.length; i += 1) {
     const previous = schedule[i];
@@ -403,21 +463,26 @@ function evaluateEmployee(
       return undefined;
     }
     rests.push(rest.period);
+    const overlap = rest.elapsed < 0 ? { overlap: true as const } : {};
     if (rest.elapsed < MINIMUM_OFF_DUTY_MINUTES) {
-      // Changed by the swap when it touches the shift taken, or when the shift given sat
-      // between these two neighbours before the swap, in start order (start instant, then
-      // roster index, the order the schedule is sorted in).
-      const changedBySwap =
-        previous === taken ||
-        next === taken ||
-        (!startsBefore(given, previous) && startsBefore(given, next));
+      const changedBySwap = restChangedBySwap(previous, next, given, taken);
       offDutyFindings.push({
         rule: "3.1",
         code: "off-duty-under-minimum",
         changedBySwap,
         minimumHours: MINIMUM_OFF_DUTY_HOURS,
         ...rest.period,
-        ...(rest.elapsed < 0 ? { overlap: true as const } : {}),
+        ...overlap,
+      });
+    }
+    if (rest.elapsed < REVIEW_OFF_DUTY_MINUTES) {
+      offDutyTriggers.push({
+        rule: "4.2(a)",
+        code: "off-duty-under-review-threshold",
+        changedBySwap: restChangedBySwap(previous, next, given, taken),
+        thresholdHours: REVIEW_OFF_DUTY_HOURS,
+        ...rest.period,
+        ...overlap,
       });
     }
   }
@@ -436,6 +501,7 @@ function evaluateEmployee(
   const takenDate = taken.start.slice(0, 10);
   const windows: SevenDayWindow[] = [];
   const sevenDayFindings: SevenDayHoursFinding[] = [];
+  const sevenDayTriggers: SevenDayReviewTrigger[] = [];
   let from: string | undefined = context.coverage.from;
   for (;;) {
     const to = addDays(from, WINDOW_DAYS - 1);
@@ -467,6 +533,18 @@ function evaluateEmployee(
         minutes,
       });
     }
+    if (total > REVIEW_WINDOW_MINUTES) {
+      sevenDayTriggers.push({
+        rule: "4.2(b)",
+        code: "seven-day-hours-over-review-threshold",
+        changedBySwap,
+        thresholdHours: REVIEW_WINDOW_HOURS,
+        from,
+        to,
+        hours,
+        minutes,
+      });
+    }
     from = addDays(from, 1);
     if (from === undefined) {
       return undefined;
@@ -491,12 +569,32 @@ function evaluateEmployee(
     offDutyAfter: rests[takenIndex] ?? null,
     windows,
     findings: [...offDutyFindings, ...sevenDayFindings, ...qualificationFindings],
+    triggers: [...offDutyTriggers, ...sevenDayTriggers],
   };
 }
 
 /**
- * Applies the swap and checks each employee's resulting schedule against §§ 3.1, 3.2 and 3.3.
- * Never throws and never reads a clock.
+ * The outcome of an evaluated swap. Precedence: any finding (§ 3) makes it
+ * `cannot-be-approved`; otherwise any review trigger (§ 4.2) makes it `review-required`;
+ * otherwise `approved-without-review`. "Cannot determine" is decided earlier, by the
+ * determinability gate, and the 422 refusal of a `cannot-be-approved` swap is in the API.
+ */
+export function classifySwap(
+  employees: readonly { findings: readonly unknown[]; triggers: readonly unknown[] }[],
+): SwapOutcome {
+  if (employees.some((employee) => employee.findings.length > 0)) {
+    return "cannot-be-approved";
+  }
+  if (employees.some((employee) => employee.triggers.length > 0)) {
+    return "review-required";
+  }
+  return "approved-without-review";
+}
+
+/**
+ * Applies the swap and checks each employee's resulting schedule against §§ 3.1, 3.2 and 3.3,
+ * evaluates the § 4.2 review triggers, and classifies the swap. Never throws and never reads a
+ * clock.
  */
 export function evaluateSwap(
   roster: unknown,
@@ -536,5 +634,6 @@ export function evaluateSwap(
   if (giver === undefined || taker === undefined) {
     return notEvaluable;
   }
-  return { kind: "evaluated", employees: [giver, taker] };
+  const employees: [EmployeeEvaluation, EmployeeEvaluation] = [giver, taker];
+  return { kind: "evaluated", outcome: classifySwap(employees), employees };
 }

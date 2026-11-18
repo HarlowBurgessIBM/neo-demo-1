@@ -183,7 +183,8 @@
           "changedBySwap": false
         }
       ],
-      "findings": []
+      "findings": [],
+      "triggers": []
     },
     {
       "party": "take-shift-owner",
@@ -368,6 +369,20 @@
           "code": "off-duty-under-minimum",
           "changedBySwap": true,
           "minimumHours": 11,
+          "fromShiftId": "CDU-CON1-0309-N",
+          "toShiftId": "CDU-CON1-0310-D",
+          "from": "2027-03-10T06:00",
+          "to": "2027-03-10T06:00",
+          "hours": 0,
+          "minutes": 0
+        }
+      ],
+      "triggers": [
+        {
+          "rule": "4.2(a)",
+          "code": "off-duty-under-review-threshold",
+          "changedBySwap": true,
+          "thresholdHours": 12,
           "fromShiftId": "CDU-CON1-0309-N",
           "toShiftId": "CDU-CON1-0310-D",
           "from": "2027-03-10T06:00",

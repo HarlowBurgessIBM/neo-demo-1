@@ -225,6 +225,7 @@ describe("the evaluation result", () => {
       offDutyAfter: null,
       windows: windowsForOneShift("2027-03-11", 720, ["2027-03-10", "2027-03-11"]),
       findings: [],
+      triggers: [],
     });
     expect(take).toEqual({
       party: "take-shift-owner",
@@ -235,6 +236,7 @@ describe("the evaluation result", () => {
       offDutyAfter: null,
       windows: windowsForOneShift("2027-03-10", 720, ["2027-03-10", "2027-03-11"]),
       findings: [],
+      triggers: [],
     });
   });
 

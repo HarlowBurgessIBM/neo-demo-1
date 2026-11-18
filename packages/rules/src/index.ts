@@ -28,14 +28,23 @@ export {
   siteLocalDate,
 } from "./site-time";
 export type { LocalTimeResolution } from "./site-time";
-export { checkQualifications, EXCEPTION_PROCEDURE, evaluateSwap } from "./swap-evaluation";
+export {
+  checkQualifications,
+  classifySwap,
+  EXCEPTION_PROCEDURE,
+  evaluateSwap,
+} from "./swap-evaluation";
 export type {
   EmployeeEvaluation,
   Finding,
   OffDutyFinding,
   OffDutyPeriod,
+  OffDutyReviewTrigger,
   QualificationFinding,
+  ReviewTrigger,
   SevenDayHoursFinding,
+  SevenDayReviewTrigger,
   SevenDayWindow,
   SwapEvaluation,
+  SwapOutcome,
 } from "./swap-evaluation";

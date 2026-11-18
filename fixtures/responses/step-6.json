@@ -194,7 +194,8 @@
           "shiftStartDate": "2027-03-17",
           "validThrough": "2027-03-15"
         }
-      ]
+      ],
+      "triggers": []
     },
     {
       "party": "take-shift-owner",
@@ -373,7 +374,8 @@
           "changedBySwap": false
         }
       ],
-      "findings": []
+      "findings": [],
+      "triggers": []
     }
   ]
 }

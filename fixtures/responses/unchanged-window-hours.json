@@ -183,7 +183,8 @@
           "changedBySwap": false
         }
       ],
-      "findings": []
+      "findings": [],
+      "triggers": []
     },
     {
       "party": "take-shift-owner",
@@ -368,6 +369,38 @@
           "code": "seven-day-hours-over-maximum",
           "changedBySwap": false,
           "maximumHours": 72,
+          "from": "2027-03-22",
+          "to": "2027-03-28",
+          "hours": 84,
+          "minutes": 0
+        }
+      ],
+      "triggers": [
+        {
+          "rule": "4.2(b)",
+          "code": "seven-day-hours-over-review-threshold",
+          "changedBySwap": false,
+          "thresholdHours": 60,
+          "from": "2027-03-20",
+          "to": "2027-03-26",
+          "hours": 72,
+          "minutes": 0
+        },
+        {
+          "rule": "4.2(b)",
+          "code": "seven-day-hours-over-review-threshold",
+          "changedBySwap": false,
+          "thresholdHours": 60,
+          "from": "2027-03-21",
+          "to": "2027-03-27",
+          "hours": 72,
+          "minutes": 0
+        },
+        {
+          "rule": "4.2(b)",
+          "code": "seven-day-hours-over-review-threshold",
+          "changedBySwap": false,
+          "thresholdHours": 60,
           "from": "2027-03-22",
           "to": "2027-03-28",
           "hours": 84,
