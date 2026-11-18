@@ -1,14 +1,23 @@
 import fc from "fast-check";
 import { describe, expect, test } from "vitest";
-import { EXCEPTION_PROCEDURE, checkQualifications, evaluateSwap } from "./swap-evaluation";
+import {
+  EXCEPTION_PROCEDURE,
+  checkQualifications,
+  classifySwap,
+  evaluateSwap,
+} from "./swap-evaluation";
 import type {
   EmployeeEvaluation,
   Finding,
   OffDutyFinding,
+  OffDutyReviewTrigger,
   QualificationFinding,
+  ReviewTrigger,
   SevenDayHoursFinding,
+  SevenDayReviewTrigger,
   SevenDayWindow,
   SwapEvaluation,
+  SwapOutcome,
 } from "./swap-evaluation";
 import {
   BYSTANDER,
@@ -1703,6 +1712,80 @@ describe("checkQualifications", () => {
   });
 });
 
+function isOffDutyTrigger(trigger: ReviewTrigger): trigger is OffDutyReviewTrigger {
+  return trigger.rule === "4.2(a)";
+}
+
+function isSevenDayTrigger(trigger: ReviewTrigger): trigger is SevenDayReviewTrigger {
+  return trigger.rule === "4.2(b)";
+}
+
+/** § 4.2(b) threshold, written out here so the tests do not depend on the code's constant. */
+const REVIEW_WINDOW_MINUTES = 60 * 60;
+const REVIEW_OFF_DUTY_MINUTES = 12 * 60;
+
+/** What `classifySwap` should say for an evaluated pair, worked out here from the precedence rule. */
+function expectedOutcome(employees: readonly EmployeeEvaluation[]): SwapOutcome {
+  if (employees.some((employee) => employee.findings.length > 0)) {
+    return "cannot-be-approved";
+  }
+  return employees.some((employee) => employee.triggers.length > 0)
+    ? "review-required"
+    : "approved-without-review";
+}
+
+/**
+ * Checks an employee's § 4.2 triggers: code and threshold for the rule, hours and minutes in
+ * range, (a) before (b), every (b) trigger matching a window over 60 h, and every § 3 finding
+ * for a rest or window also showing as a trigger.
+ */
+function expectWellFormedTriggers(employee: EmployeeEvaluation): void {
+  const { triggers } = employee;
+  const rules = triggers.map((trigger) => trigger.rule);
+  expect(rules).toEqual([...rules].sort());
+  for (const trigger of triggers) {
+    expect(Number.isInteger(trigger.hours) && trigger.hours >= 0).toBe(true);
+    expect(
+      Number.isInteger(trigger.minutes) && trigger.minutes >= 0 && trigger.minutes <= 59,
+    ).toBe(true);
+    expect(typeof trigger.changedBySwap).toBe("boolean");
+    if (isOffDutyTrigger(trigger)) {
+      expect(trigger.code).toBe("off-duty-under-review-threshold");
+      expect(trigger.thresholdHours).toBe(12);
+      expect(totalMinutes(trigger)).toBeLessThan(REVIEW_OFF_DUTY_MINUTES);
+      if (trigger.overlap === true) {
+        expect([trigger.hours, trigger.minutes]).toEqual([0, 0]);
+      }
+    } else {
+      expect(trigger.code).toBe("seven-day-hours-over-review-threshold");
+      expect(trigger.thresholdHours).toBe(60);
+      expect(totalMinutes(trigger)).toBeGreaterThan(REVIEW_WINDOW_MINUTES);
+    }
+  }
+  const sevenDay = triggers.filter(isSevenDayTrigger);
+  expect(sevenDay.map(({ from, to, hours, minutes, changedBySwap }) => ({ from, to, hours, minutes, changedBySwap }))).toEqual(
+    employee.windows.filter((window) => totalMinutes(window) > REVIEW_WINDOW_MINUTES),
+  );
+  for (const finding of offDutyFindings(employee)) {
+    expect(triggers).toContainEqual({
+      rule: "4.2(a)",
+      code: "off-duty-under-review-threshold",
+      changedBySwap: finding.changedBySwap,
+      thresholdHours: 12,
+      fromShiftId: finding.fromShiftId,
+      toShiftId: finding.toShiftId,
+      from: finding.from,
+      to: finding.to,
+      hours: finding.hours,
+      minutes: finding.minutes,
+      ...(finding.overlap === true ? { overlap: true } : {}),
+    });
+  }
+  for (const finding of sevenDayFindings(employee)) {
+    expect(sevenDay.map(({ from, to }) => [from, to])).toContainEqual([finding.from, finding.to]);
+  }
+}
+
 describe("evaluateSwap robustness properties", () => {
   const evaluationKinds = ["evaluated", "not-evaluable"];
 
@@ -1789,7 +1872,9 @@ describe("evaluateSwap robustness properties", () => {
         expect([first.party, second.party]).toEqual(["give-shift-owner", "take-shift-owner"]);
         expect([first.gaveShiftId, first.tookShiftId]).toEqual([GIVE_SHIFT_ID, TAKE_SHIFT_ID]);
         expect([second.gaveShiftId, second.tookShiftId]).toEqual([TAKE_SHIFT_ID, GIVE_SHIFT_ID]);
+        expect(result.outcome).toBe(expectedOutcome(result.employees));
         for (const employee of result.employees) {
+          expectWellFormedTriggers(employee);
           for (const finding of offDutyFindings(employee)) {
             expect(Number.isInteger(finding.hours) && finding.hours >= 0).toBe(true);
             expect(Number.isInteger(finding.minutes) && finding.minutes >= 0 && finding.minutes < 60).toBe(true);
@@ -1807,5 +1892,623 @@ describe("evaluateSwap robustness properties", () => {
       { numRuns: 1000, seed: 20270307 },
     );
     expect(evaluatedCount).toBeGreaterThan(0);
+  });
+});
+
+describe("§ 4.2 review triggers and classification", () => {
+  const PREVIOUS_END = "2027-03-10T18:00";
+  const GENERATED_START = "2027-03-01T00:00";
+  const parties = [
+    {
+      party: "give-shift-owner",
+      index: 0,
+      owner: GIVE_OWNER,
+      otherOwner: TAKE_OWNER,
+      givenShiftId: GIVE_SHIFT_ID,
+      takenShiftId: TAKE_SHIFT_ID,
+    },
+    {
+      party: "take-shift-owner",
+      index: 1,
+      owner: TAKE_OWNER,
+      otherOwner: GIVE_OWNER,
+      givenShiftId: TAKE_SHIFT_ID,
+      takenShiftId: GIVE_SHIFT_ID,
+    },
+  ] as const;
+  type TriggerParty = (typeof parties)[number];
+
+  function evaluatedResult(roster: unknown): Extract<SwapEvaluation, { kind: "evaluated" }> {
+    const result = evaluate(roster);
+    if (result.kind !== "evaluated") {
+      throw new Error("expected the swap to be evaluable");
+    }
+    return result;
+  }
+
+  /** The party's evaluation and the other party's. */
+  function split(
+    employees: [EmployeeEvaluation, EmployeeEvaluation],
+    party: TriggerParty,
+  ): { own: EmployeeEvaluation; other: EmployeeEvaluation } {
+    const [first, second] = employees;
+    return party.index === 0 ? { own: first, other: second } : { own: second, other: first };
+  }
+
+  // --- § 4.2(a): the rest before the shift the party takes -------------------------------
+
+  /**
+   * The party's shift "PREV" ends 10 Mar 18:00; the shift the party takes starts `restMinutes`
+   * later (earlier if negative) and lasts 12 h. The party gives a shift on 20 Mar. The other
+   * party gets the shift given and nothing else, so only the party can have a rest.
+   */
+  function restRoster(party: TriggerParty, restMinutes: number): RosterFixture {
+    const takenStart = wallPlus(PREVIOUS_END, restMinutes);
+    return rosterOf([
+      makeShift("PREV", party.owner, "2027-03-10T06:00", PREVIOUS_END),
+      makeShift(party.takenShiftId, party.otherOwner, takenStart, wallPlus(takenStart, 720)),
+      makeShift(party.givenShiftId, party.owner, "2027-03-20T06:00", "2027-03-20T18:00"),
+    ]);
+  }
+
+  function restTrigger(party: TriggerParty, restMinutes: number): OffDutyReviewTrigger {
+    const shown = Math.max(0, restMinutes);
+    return {
+      rule: "4.2(a)",
+      code: "off-duty-under-review-threshold",
+      changedBySwap: true,
+      thresholdHours: 12,
+      fromShiftId: "PREV",
+      toShiftId: party.takenShiftId,
+      from: PREVIOUS_END,
+      to: wallPlus(PREVIOUS_END, restMinutes),
+      hours: Math.floor(shown / 60),
+      minutes: shown % 60,
+      ...(restMinutes < 0 ? { overlap: true as const } : {}),
+    };
+  }
+
+  /**
+   * The party keeps two shifts a rest of 11 h 40 min apart (10 to 11 Mar); the swap moves
+   * shifts on 24 and 25 Mar, nowhere near them.
+   */
+  function unchangedRestRoster(party: TriggerParty): RosterFixture {
+    const secondStart = wallPlus(PREVIOUS_END, 700);
+    return rosterOf([
+      makeShift("UNCH-1", party.owner, "2027-03-10T06:00", PREVIOUS_END),
+      makeShift("UNCH-2", party.owner, secondStart, wallPlus(secondStart, 720)),
+      makeShift(party.givenShiftId, party.owner, "2027-03-24T06:00", "2027-03-24T18:00"),
+      makeShift(party.takenShiftId, party.otherOwner, "2027-03-25T06:00", "2027-03-25T18:00"),
+    ]);
+  }
+
+  // --- § 4.2(b): the party's six shifts on 1 to 6 Mar --------------------------------------
+
+  /**
+   * The party has six shifts starting 06:00 on 1 to 6 Mar with the given `durations`
+   * (minutes), gives a shift on `givenDate` and takes one on 24 Mar. The other party gets the
+   * shift given and nothing else.
+   */
+  function windowRoster(
+    party: TriggerParty,
+    durations: readonly number[],
+    givenDate: string,
+  ): RosterFixture {
+    const owned = durations.map((duration, i) => {
+      const start = `2027-03-0${i + 1}T06:00`;
+      return makeShift(`W${i + 1}`, party.owner, start, wallPlus(start, duration));
+    });
+    return rosterOf([
+      ...owned,
+      makeShift(party.givenShiftId, party.owner, `${givenDate}T06:00`, `${givenDate}T18:00`),
+      makeShift(party.takenShiftId, party.otherOwner, "2027-03-24T06:00", "2027-03-24T18:00"),
+    ]);
+  }
+
+  function windowTrigger(
+    from: string,
+    minutes: number,
+    changedBySwap: boolean,
+  ): SevenDayReviewTrigger {
+    return {
+      rule: "4.2(b)",
+      code: "seven-day-hours-over-review-threshold",
+      changedBySwap,
+      thresholdHours: 60,
+      from,
+      to: plusDays(from, 6),
+      hours: Math.floor(minutes / 60),
+      minutes: minutes % 60,
+    };
+  }
+
+  const sixAt600 = [600, 600, 600, 600, 600, 600];
+  const sixOver60 = [600, 600, 600, 600, 600, 601];
+
+  describe.each(parties)("the $party, boundaries (criterion 1)", (party) => {
+    describe("§ 4.2(a) off-duty period", () => {
+      test("a rest of exactly 12 h 0 min is no trigger and the swap is approved without review", () => {
+        const result = evaluatedResult(restRoster(party, 720));
+        const { own, other } = split(result.employees, party);
+        expect(own.offDutyBefore).toMatchObject({ hours: 12, minutes: 0 });
+        expect(own.findings).toEqual([]);
+        expect(own.triggers).toEqual([]);
+        expect(other.findings).toEqual([]);
+        expect(other.triggers).toEqual([]);
+        expect(result.outcome).toBe("approved-without-review");
+      });
+
+      test("a rest of 11 h 59 min is one trigger, no § 3 finding, and the swap needs review", () => {
+        const result = evaluatedResult(restRoster(party, 719));
+        const { own, other } = split(result.employees, party);
+        expect(own.findings).toEqual([]);
+        expect(own.triggers).toStrictEqual([
+          {
+            rule: "4.2(a)",
+            code: "off-duty-under-review-threshold",
+            changedBySwap: true,
+            thresholdHours: 12,
+            fromShiftId: "PREV",
+            toShiftId: party.takenShiftId,
+            from: "2027-03-10T18:00",
+            to: "2027-03-11T05:59",
+            hours: 11,
+            minutes: 59,
+          },
+        ]);
+        expect(other.findings).toEqual([]);
+        expect(other.triggers).toEqual([]);
+        expect(result.outcome).toBe("review-required");
+      });
+
+      test("a rest of exactly 11 h 0 min is a trigger but no finding", () => {
+        const result = evaluatedResult(restRoster(party, 660));
+        const { own } = split(result.employees, party);
+        expect(own.findings).toEqual([]);
+        expect(own.triggers).toStrictEqual([restTrigger(party, 660)]);
+        expect(result.outcome).toBe("review-required");
+      });
+
+      test("a rest between two shifts the swap does not touch is still a trigger, labelled changedBySwap false", () => {
+        const result = evaluatedResult(unchangedRestRoster(party));
+        const { own, other } = split(result.employees, party);
+        expect(own.findings).toEqual([]);
+        expect(own.triggers).toStrictEqual([
+          {
+            rule: "4.2(a)",
+            code: "off-duty-under-review-threshold",
+            changedBySwap: false,
+            thresholdHours: 12,
+            fromShiftId: "UNCH-1",
+            toShiftId: "UNCH-2",
+            from: "2027-03-10T18:00",
+            to: "2027-03-11T05:40",
+            hours: 11,
+            minutes: 40,
+          },
+        ]);
+        expect(other.triggers).toEqual([]);
+        expect(result.outcome).toBe("review-required");
+      });
+
+      test("a rest the swap creates is labelled changedBySwap true", () => {
+        const { own } = split(evaluatedResult(restRoster(party, 700)).employees, party);
+        expect(own.triggers).toMatchObject([{ rule: "4.2(a)", changedBySwap: true }]);
+      });
+
+      test("property: a trigger for any rest of 0 to 1,500 min exactly when it is under 720, a finding exactly when it is under 660", () => {
+        fc.assert(
+          fc.property(
+            fc.oneof(fc.integer({ min: 0, max: 1500 }), fc.integer({ min: 655, max: 725 })),
+            (restMinutes) => {
+              const result = evaluatedResult(restRoster(party, restMinutes));
+              const { own, other } = split(result.employees, party);
+              expect(other.triggers).toEqual([]);
+              expect(own.findings).toHaveLength(restMinutes < 660 ? 1 : 0);
+              expect(own.triggers).toStrictEqual(
+                restMinutes < 720 ? [restTrigger(party, restMinutes)] : [],
+              );
+              const expected: SwapOutcome =
+                restMinutes < 660
+                  ? "cannot-be-approved"
+                  : restMinutes < 720
+                    ? "review-required"
+                    : "approved-without-review";
+              expect(result.outcome).toBe(expected);
+            },
+          ),
+          { numRuns: 200, seed: 20270308 },
+        );
+      });
+    });
+
+    describe("§ 4.2(b) seven-day hours", () => {
+      test("a window of exactly 60 h 0 min is no trigger and the swap is approved without review", () => {
+        const result = evaluatedResult(windowRoster(party, sixAt600, "2027-03-07"));
+        const { own, other } = split(result.employees, party);
+        expect(own.windows[0]).toMatchObject({ from: "2027-03-01", hours: 60, minutes: 0 });
+        expect(own.findings).toEqual([]);
+        expect(own.triggers).toEqual([]);
+        expect(other.triggers).toEqual([]);
+        expect(result.outcome).toBe("approved-without-review");
+      });
+
+      test("a window of 60 h 1 min is one trigger for that window, no § 3.2 finding, and the swap needs review", () => {
+        const result = evaluatedResult(windowRoster(party, sixOver60, "2027-03-07"));
+        const { own, other } = split(result.employees, party);
+        expect(own.findings).toEqual([]);
+        expect(own.triggers).toStrictEqual([
+          {
+            rule: "4.2(b)",
+            code: "seven-day-hours-over-review-threshold",
+            changedBySwap: true,
+            thresholdHours: 60,
+            from: "2027-03-01",
+            to: "2027-03-07",
+            hours: 60,
+            minutes: 1,
+          },
+        ]);
+        expect(other.findings).toEqual([]);
+        expect(other.triggers).toEqual([]);
+        expect(result.outcome).toBe("review-required");
+      });
+
+      test("a window the swap does not touch is still a trigger, labelled changedBySwap false", () => {
+        const result = evaluatedResult(windowRoster(party, sixOver60, "2027-03-20"));
+        const { own, other } = split(result.employees, party);
+        expect(own.findings).toEqual([]);
+        expect(own.triggers).toStrictEqual([windowTrigger("2027-03-01", 3601, false)]);
+        expect(other.triggers).toEqual([]);
+        expect(result.outcome).toBe("review-required");
+      });
+
+      test("a window the swap changes is labelled changedBySwap true", () => {
+        const { own } = split(
+          evaluatedResult(windowRoster(party, sixOver60, "2027-03-07")).employees,
+          party,
+        );
+        expect(own.triggers).toStrictEqual([windowTrigger("2027-03-01", 3601, true)]);
+      });
+
+      test("property: a trigger for the window of 1 to 7 Mar exactly when its total is over 3,600 min", () => {
+        const total = fc.oneof(
+          fc.integer({ min: 3500, max: 3700 }),
+          fc.constantFrom(3599, 3600, 3601),
+        );
+        // Five shifts of 8 h 20 min to 11 h 40 min and a sixth that makes up the total.
+        const firstFive = fc.array(fc.integer({ min: 500, max: 700 }), {
+          minLength: 5,
+          maxLength: 5,
+        });
+        fc.assert(
+          fc.property(total, firstFive, (minutes, five) => {
+            const last = minutes - five.reduce((sum, duration) => sum + duration, 0);
+            const result = evaluatedResult(windowRoster(party, [...five, last], "2027-03-07"));
+            const { own, other } = split(result.employees, party);
+            expect(own.windows[0] && totalMinutes(own.windows[0])).toBe(minutes);
+            expect(own.findings).toEqual([]);
+            expect(other.triggers).toEqual([]);
+            const firstWindow = own.triggers
+              .filter(isSevenDayTrigger)
+              .filter((trigger) => trigger.from === "2027-03-01");
+            expect(firstWindow).toStrictEqual(
+              minutes > 3600 ? [windowTrigger("2027-03-01", minutes, true)] : [],
+            );
+          }),
+          { numRuns: 200, seed: 20270309 },
+        );
+      });
+    });
+  });
+
+  describe.each(parties)("the $party, with a § 3 finding as well", (party) => {
+    test("a rest under 11 h is a § 3.1 finding and a trigger, and the swap cannot be approved", () => {
+      const result = evaluatedResult(restRoster(party, 659));
+      const { own, other } = split(result.employees, party);
+      expect(own.findings).toMatchObject([{ rule: "3.1", hours: 10, minutes: 59 }]);
+      expect(own.triggers).toStrictEqual([restTrigger(party, 659)]);
+      expect(other.findings).toEqual([]);
+      expect(other.triggers).toEqual([]);
+      expect(result.outcome).toBe("cannot-be-approved");
+    });
+
+    test("an overlap is a trigger with overlap true and 0 h 0 min, beside the § 3.1 finding", () => {
+      const result = evaluatedResult(restRoster(party, -60));
+      const { own } = split(result.employees, party);
+      expect(own.findings).toMatchObject([{ rule: "3.1", hours: 0, minutes: 0, overlap: true }]);
+      expect(own.triggers).toStrictEqual([
+        {
+          rule: "4.2(a)",
+          code: "off-duty-under-review-threshold",
+          changedBySwap: true,
+          thresholdHours: 12,
+          fromShiftId: "PREV",
+          toShiftId: party.takenShiftId,
+          from: "2027-03-10T18:00",
+          to: "2027-03-10T17:00",
+          hours: 0,
+          minutes: 0,
+          overlap: true,
+        },
+      ]);
+      expect(result.outcome).toBe("cannot-be-approved");
+    });
+
+    test("a window over 72 h is a § 3.2 finding and a trigger, and the swap cannot be approved", () => {
+      const result = evaluatedResult(
+        windowRoster(party, [720, 720, 720, 720, 720, 721], "2027-03-07"),
+      );
+      const { own, other } = split(result.employees, party);
+      expect(own.findings).toMatchObject([
+        { rule: "3.2", from: "2027-03-01", to: "2027-03-07", hours: 72, minutes: 1 },
+      ]);
+      // The window of 2 to 8 Mar holds the last five shifts: 60 h 1 min.
+      expect(own.triggers).toStrictEqual([
+        windowTrigger("2027-03-01", 4321, true),
+        windowTrigger("2027-03-02", 3601, true),
+      ]);
+      expect(other.findings).toEqual([]);
+      expect(other.triggers).toEqual([]);
+      expect(result.outcome).toBe("cannot-be-approved");
+    });
+  });
+
+  describe("classification by a finding on one employee and a trigger on the other", () => {
+    const EXPIRED = [{ unit: "CDU", role: "CONSOLE", validThrough: "2027-01-01" }];
+
+    test("a § 3.3 finding with no trigger cannot be approved", () => {
+      const roster = setQualifications(restRoster(parties[0], 720), GIVE_OWNER, EXPIRED);
+      const result = evaluatedResult(roster);
+      expect(result.employees[0].findings.map((finding) => finding.rule)).toEqual(["3.3", "3.3"]);
+      expect(result.employees[0].triggers).toEqual([]);
+      expect(result.employees[1].triggers).toEqual([]);
+      expect(result.outcome).toBe("cannot-be-approved");
+    });
+
+    test("a § 3.3 finding on the give owner beats a trigger on the take owner", () => {
+      const roster = setQualifications(restRoster(parties[1], 719), GIVE_OWNER, EXPIRED);
+      const result = evaluatedResult(roster);
+      expect(result.employees[0].findings).toMatchObject([{ rule: "3.3" }]);
+      expect(result.employees[1].findings).toEqual([]);
+      expect(result.employees[1].triggers).toHaveLength(1);
+      expect(result.outcome).toBe("cannot-be-approved");
+    });
+
+    test("triggers on both employees are a single review", () => {
+      const roster = rosterOf([
+        makeShift("A-PREV", GIVE_OWNER, "2027-03-10T06:00", PREVIOUS_END),
+        makeShift("B-PREV", TAKE_OWNER, "2027-03-10T06:00", PREVIOUS_END),
+        makeShift(TAKE_SHIFT_ID, TAKE_OWNER, "2027-03-11T05:30", "2027-03-11T17:30"),
+        makeShift(GIVE_SHIFT_ID, GIVE_OWNER, "2027-03-11T05:30", "2027-03-11T17:30"),
+      ]);
+      const result = evaluatedResult(roster);
+      expect(result.employees[0].triggers).toMatchObject([{ rule: "4.2(a)", hours: 11, minutes: 30 }]);
+      expect(result.employees[1].triggers).toMatchObject([{ rule: "4.2(a)", hours: 11, minutes: 30 }]);
+      expect(result.outcome).toBe("review-required");
+    });
+  });
+
+  describe("order", () => {
+    // The give owner keeps ten 12 h 30 min shifts, 1 to 5 and 8 to 12 Mar, 06:00 to 18:30: eight
+    // rests of 11 h 30 min, and several windows of five shifts (62 h 30 min). The swap changes
+    // none of them: it moves shifts on 24 and 25 Mar.
+    const clusterDates = [1, 2, 3, 4, 5, 8, 9, 10, 11, 12].map(
+      (day) => `2027-03-${String(day).padStart(2, "0")}`,
+    );
+    const roster = rosterOf([
+      ...clusterDates.map((date, i) =>
+        makeShift(`K${i}`, GIVE_OWNER, `${date}T06:00`, `${date}T18:30`),
+      ),
+      makeShift(GIVE_SHIFT_ID, GIVE_OWNER, "2027-03-25T06:00", "2027-03-25T18:00"),
+      makeShift(TAKE_SHIFT_ID, TAKE_OWNER, "2027-03-24T06:00", "2027-03-24T18:00"),
+    ]);
+
+    test("every (a) trigger comes before every (b) trigger, each group in time order", () => {
+      const result = evaluatedResult(roster);
+      const [give, take] = result.employees;
+      const expectedRestStarts = clusterDates
+        .filter((date) => date !== "2027-03-05" && date !== "2027-03-12")
+        .map((date) => `${date}T18:30`);
+      const totals = expectedTotals(
+        COVERAGE_FROM,
+        22,
+        [...clusterDates.map((date): [string, number] => [date, 750]), ["2027-03-24", 720]],
+      );
+      const expectedWindowStarts = totals
+        .map((total, i) => ({ total, from: plusDays(COVERAGE_FROM, i) }))
+        .filter(({ total }) => total > 3600)
+        .map(({ from }) => from);
+      expect(expectedWindowStarts.length).toBeGreaterThan(1);
+
+      expect(give.findings).toEqual([]);
+      expect(give.triggers.map((trigger) => trigger.rule)).toEqual([
+        ...expectedRestStarts.map(() => "4.2(a)"),
+        ...expectedWindowStarts.map(() => "4.2(b)"),
+      ]);
+      expect(give.triggers.filter(isOffDutyTrigger).map((trigger) => trigger.from)).toEqual(
+        expectedRestStarts,
+      );
+      expect(give.triggers.filter(isSevenDayTrigger).map((trigger) => trigger.from)).toEqual(
+        expectedWindowStarts,
+      );
+      expect(give.triggers.every((trigger) => !trigger.changedBySwap)).toBe(true);
+      expect(take.triggers).toEqual([]);
+      expect(result.outcome).toBe("review-required");
+    });
+  });
+
+  describe("the output carries no employee number", () => {
+    test.each([
+      ["a rest trigger", restRoster(parties[0], 719), "4.2(a)"],
+      ["a window trigger", windowRoster(parties[1], sixOver60, "2027-03-07"), "4.2(b)"],
+    ])("with %s", (_label, roster, rule) => {
+      const text = JSON.stringify(evaluatedResult(roster));
+      expect(text).toContain(rule);
+      for (const number of [GIVE_OWNER, TAKE_OWNER, BYSTANDER]) {
+        expect(text).not.toContain(number);
+      }
+    });
+  });
+
+  describe("classifySwap", () => {
+    const some = ["x"];
+    test.each<[string, string[], string[], string[], string[], SwapOutcome]>([
+      ["no findings and no triggers", [], [], [], [], "approved-without-review"],
+      ["a trigger on the first employee", [], some, [], [], "review-required"],
+      ["a trigger on the second employee", [], [], [], some, "review-required"],
+      ["triggers on both employees", [], some, [], some, "review-required"],
+      ["a finding on the first employee", some, [], [], [], "cannot-be-approved"],
+      ["a finding on the second employee", [], [], some, [], "cannot-be-approved"],
+      ["a finding and a trigger on one employee", some, some, [], [], "cannot-be-approved"],
+      ["a finding on one employee and a trigger on the other", some, [], [], some, "cannot-be-approved"],
+      ["a finding on one employee and a trigger on the same employee's partner", [], some, some, [], "cannot-be-approved"],
+    ])("%s is %s", (_label, findingsA, triggersA, findingsB, triggersB, outcome) => {
+      expect(
+        classifySwap([
+          { findings: findingsA, triggers: triggersA },
+          { findings: findingsB, triggers: triggersB },
+        ]),
+      ).toBe(outcome);
+    });
+  });
+
+  // --- Generated rosters -----------------------------------------------------------------
+
+  // Each owner has one to seven shifts in a row, 1 to 13 Mar (before the 14 Mar clock change),
+  // with a rest after each that is often 11 to 13 h, so that every outcome is reachable. One of
+  // each owner's shifts is the one in the swap.
+  const planShift = fc.record({
+    duration: fc.integer({ min: 480, max: 800 }),
+    rest: fc.oneof(
+      { weight: 6, arbitrary: fc.integer({ min: 660, max: 800 }) },
+      { weight: 2, arbitrary: fc.integer({ min: 801, max: 1500 }) },
+      { weight: 1, arbitrary: fc.integer({ min: 0, max: 659 }) },
+    ),
+  });
+  const ownerPlan = fc.record({
+    firstStart: fc.integer({ min: 0, max: 2880 }),
+    shifts: fc.array(planShift, { minLength: 1, maxLength: 7 }),
+    swapped: fc.nat(),
+  });
+  type OwnerPlan = { firstStart: number; shifts: { duration: number; rest: number }[]; swapped: number };
+
+  function shiftsOfPlan(
+    owner: string,
+    swappedShiftId: string,
+    otherPrefix: string,
+    plan: OwnerPlan,
+  ): RosterShift[] {
+    const swappedIndex = plan.swapped % plan.shifts.length;
+    let cursor = plan.firstStart;
+    return plan.shifts.map(({ duration, rest }, i) => {
+      const start = wallPlus(GENERATED_START, cursor);
+      cursor += duration + rest;
+      return makeShift(
+        i === swappedIndex ? swappedShiftId : `${otherPrefix}${i}`,
+        owner,
+        start,
+        wallPlus(start, duration),
+      );
+    });
+  }
+
+  const generatedRoster = fc.tuple(ownerPlan, ownerPlan).map(([giveOwnerPlan, takeOwnerPlan]) =>
+    rosterOf([
+      ...shiftsOfPlan(GIVE_OWNER, GIVE_SHIFT_ID, "A", giveOwnerPlan),
+      ...shiftsOfPlan(TAKE_OWNER, TAKE_SHIFT_ID, "B", takeOwnerPlan),
+    ]),
+  );
+
+  test("property: any finding makes the swap cannot-be-approved; else any trigger makes it review-required; else approved-without-review", () => {
+    const hits = { findings: 0, triggersOnly: 0, neither: 0 };
+    fc.assert(
+      fc.property(generatedRoster, (roster) => {
+        const result = evaluatedResult(roster);
+        const anyFinding = result.employees.some((employee) => employee.findings.length > 0);
+        const anyTrigger = result.employees.some((employee) => employee.triggers.length > 0);
+        if (anyFinding) {
+          hits.findings += 1;
+          expect(result.outcome).toBe("cannot-be-approved");
+        } else if (anyTrigger) {
+          hits.triggersOnly += 1;
+          expect(result.outcome).toBe("review-required");
+        } else {
+          hits.neither += 1;
+          expect(result.outcome).toBe("approved-without-review");
+        }
+        for (const employee of result.employees) {
+          expectWellFormedTriggers(employee);
+        }
+      }),
+      { numRuns: 500, seed: 20270310 },
+    );
+    // Not vacuous: all three branches were reached.
+    expect(hits.findings).toBeGreaterThan(0);
+    expect(hits.triggersOnly).toBeGreaterThan(0);
+    expect(hits.neither).toBeGreaterThan(0);
+  });
+
+  describe("symmetry: A gives a and takes b, or B gives b and takes a", () => {
+    /** The name of the roster owner of `shiftId`, the stable identity of an employee. */
+    function ownerName(roster: RosterFixture, shiftId: string): string | undefined {
+      const owner = roster.shifts.find((shift) => shift.shiftId === shiftId)?.employeeNumber;
+      return roster.operators.find((operator) => operator.employeeNumber === owner)?.name;
+    }
+
+    /** An evaluation without its `party`, which is the only thing that differs by direction. */
+    function withoutParty(employee: EmployeeEvaluation): Record<string, unknown> {
+      return Object.fromEntries(Object.entries(employee).filter(([key]) => key !== "party"));
+    }
+
+    function byIdentity(
+      roster: RosterFixture,
+      employees: [EmployeeEvaluation, EmployeeEvaluation],
+    ): Map<string | undefined, Record<string, unknown>> {
+      return new Map(
+        employees.map((employee) => [
+          ownerName(roster, employee.gaveShiftId),
+          withoutParty(employee),
+        ]),
+      );
+    }
+
+    function evaluateDirection(
+      roster: unknown,
+      giveShiftId: string,
+      takeShiftId: string,
+    ): Extract<SwapEvaluation, { kind: "evaluated" }> {
+      const result = evaluateSwap(roster, { giveShiftId, takeShiftId });
+      if (result.kind !== "evaluated") {
+        throw new Error("expected the swap to be evaluable");
+      }
+      return result;
+    }
+
+    test("property: both directions give the same outcome, and each employee the same findings and triggers", () => {
+      const hits = { findings: 0, triggers: 0 };
+      fc.assert(
+        fc.property(generatedRoster, (roster) => {
+          const forward = evaluatedResult(roster);
+          const reverse = evaluateDirection(roster, TAKE_SHIFT_ID, GIVE_SHIFT_ID);
+          expect(reverse.outcome).toBe(forward.outcome);
+          const forwardByIdentity = byIdentity(roster, forward.employees);
+          const reverseByIdentity = byIdentity(roster, reverse.employees);
+          expect([...forwardByIdentity.keys()].sort()).toEqual([GIVE_NAME, TAKE_NAME]);
+          expect(reverseByIdentity.get(GIVE_NAME)).toEqual(forwardByIdentity.get(GIVE_NAME));
+          expect(reverseByIdentity.get(TAKE_NAME)).toEqual(forwardByIdentity.get(TAKE_NAME));
+          for (const employee of forward.employees) {
+            const other = reverseByIdentity.get(employee.name ?? "");
+            expect(other?.["findings"]).toEqual(employee.findings);
+            expect(other?.["triggers"]).toEqual(employee.triggers);
+          }
+          hits.findings += forward.employees.some((employee) => employee.findings.length > 0) ? 1 : 0;
+          hits.triggers += forward.employees.some((employee) => employee.triggers.length > 0) ? 1 : 0;
+        }),
+        { numRuns: 300, seed: 20270311 },
+      );
+      expect(hits.findings).toBeGreaterThan(0);
+      expect(hits.triggers).toBeGreaterThan(0);
+    });
   });
 });
