@@ -217,6 +217,36 @@ export function unchangedRestRoster(): Roster {
 }
 
 /**
+ * For the Step 1 pick: adds five Luis (the owner of the shift Maya takes, 102286) CDU/CONSOLE
+ * day shifts, 06:00–18:00 site time, on 2027-03-22, 23, 24, 25 and 28. The ids end in `-X` so
+ * they clash with no sample shift and no other builder's shift.
+ *
+ * With his sample CDU-CON1-0326-D and CDU-CON1-0327-D, Luis works every date of the window
+ * 2027-03-22 to 2027-03-28: 7 × 12 = 84 h, over the 72 h maximum. The windows 03-20 to 03-26 and
+ * 03-21 to 03-27 hold 72 h, so they pass. The swap's dates are 03-18 and 03-19, so the window
+ * 03-22 to 03-28 is not changed by the swap. There is a 12 h rest between each pair of days, and
+ * the 03-20 night shift ends 24 h before the first, so § 3.1 and § 3.3 stay clean and the only
+ * finding is the unchanged § 3.2 one.
+ */
+export function unchangedWindowRoster(): Roster {
+  const roster = readSampleRoster();
+  const take = roster.shifts.find((shift) => shift.shiftId === STEP_1.take);
+  if (take === undefined) {
+    throw new Error("sample roster has no Step 1 take shift");
+  }
+  const added: RosterShift[] = ["22", "23", "24", "25", "28"].map((day) => ({
+    shiftId: `CDU-CON1-03${day}-X`,
+    unit: "CDU",
+    role: "CONSOLE",
+    start: `2027-03-${day}T06:00`,
+    end: `2027-03-${day}T18:00`,
+    employeeNumber: take.employeeNumber,
+  }));
+  roster.shifts.push(...added);
+  return roster;
+}
+
+/**
  * For the Step 2 pick: adds a Priya (107903) HCU/CONSOLE shift her qualification (valid through
  * 2027-03-15) does not cover. It is on 2027-03-23, inside coverage, unless `outsideCoverage` puts
  * it on 2027-03-29, after the last covered date. The shift is not part of the swap.

@@ -1,4 +1,4 @@
-import type { EmployeeEvaluation, Finding, OffDutyFinding } from "@shiftswap/rules";
+import type { EmployeeEvaluation, Finding, OffDutyFinding, SevenDayWindow } from "@shiftswap/rules";
 import type { LightMyRequestResponse } from "fastify";
 import { describe, expect, test } from "vitest";
 import { buildApp } from "./app";
@@ -14,15 +14,18 @@ import {
   STEP_2,
   STEP_3,
   STEP_4,
+  STEP_5,
   STEP_6,
   unchangedRestRoster,
   unchangedShiftQualificationRoster,
+  unchangedWindowRoster,
   type Roster,
   type RosterOperator,
   type SwapPick,
 } from "./test-support";
 
-// POST /api/swap-checks evaluates § 3.1 and § 3.3 on the resulting schedules (issue #6). Fixtures
+// POST /api/swap-checks evaluates § 3.1, § 3.2 and § 3.3 on the resulting schedules (issues #6 and
+// #7). Fixtures
 // are the shared response fixtures in fixtures/responses, the same files the web tests read.
 //
 // BE ruling 7: a response body carries no employee number. A person named in a criterion is
@@ -34,6 +37,8 @@ const LUIS = "102286";
 const PRIYA = "107903";
 const DWAYNE = "101152";
 const AISHA = "106640";
+const TOM = "103078";
+const JEROME = "108529";
 
 /** 28 hours after the sample export, so the export is stale. */
 const STALE_NOW = "2027-03-08T12:00:00Z";
@@ -126,10 +131,11 @@ function employeeNumbersOf(roster: Roster): string[] {
   return [...roster.operators, ...roster.supervisors].map((person) => person.employeeNumber);
 }
 
-describe("criterion 17: the Step 3, 4 and 6 bodies equal the shared fixtures", () => {
+describe("criterion 17: the Step 3, 4, 5 and 6 bodies equal the shared fixtures", () => {
   const fixtures: [string, SwapPick][] = [
     ["step-3.json", STEP_3],
     ["step-4.json", STEP_4],
+    ["step-5.json", STEP_5],
     ["step-6.json", STEP_6],
   ];
 
@@ -337,6 +343,156 @@ describe("criterion 15: a failure on a shift the swap did not touch", () => {
   });
 });
 
+describe("issue #7: the seven-day hours rule (§ 3.2) over every window in coverage", () => {
+  const SEVEN_DAY_MAXIMUM = 72;
+
+  /** The window of `employee` that starts on `from`. */
+  function windowFrom(employee: EmployeeEvaluation, from: string): SevenDayWindow {
+    const window = employee.windows.find((candidate) => candidate.from === from);
+    if (window === undefined) {
+      throw new Error(`no window from ${from}`);
+    }
+    return window;
+  }
+
+  /** `date` plus `days` calendar days, for dates in the sample's March 2027. */
+  function plusDays(date: string, days: number): string {
+    const day = Number(date.slice(8, 10)) + days;
+    return `${date.slice(0, 8)}${String(day).padStart(2, "0")}`;
+  }
+
+  test("criterion 5: Step 5, Tom Broussard has the one § 3.2 finding of 84 h; Jerome Guidry has none", async () => {
+    const roster = readSampleRoster();
+    const body = cannotBeApproved(await swapCheck(STEP_5, roster));
+
+    expect(allFindings(body)).toHaveLength(1);
+
+    const tom = employeeOf(body, "give-shift-owner");
+    expectResolvesTo(roster, tom, { employeeNumber: TOM, name: operatorOf(roster, TOM).name });
+    expect(ownerOfShift(roster, STEP_5.give).employeeNumber).toBe(TOM);
+    expect(tom.findings).toEqual([
+      {
+        rule: "3.2",
+        code: "seven-day-hours-over-maximum",
+        changedBySwap: true,
+        maximumHours: SEVEN_DAY_MAXIMUM,
+        from: "2027-03-15",
+        to: "2027-03-21",
+        hours: 84,
+        minutes: 0,
+      },
+    ]);
+    expect(windowFrom(tom, "2027-03-14")).toMatchObject({ to: "2027-03-20", hours: 72, minutes: 0 });
+    expect(windowFrom(tom, "2027-03-16")).toMatchObject({ to: "2027-03-22", hours: 72, minutes: 0 });
+    expect(windowFrom(tom, "2027-03-15")).toMatchObject({ hours: 84, minutes: 0, changedBySwap: true });
+    expect(tom.offDutyBefore).toMatchObject({ hours: 12, minutes: 0 });
+    expect(tom.offDutyAfter).toMatchObject({ hours: 24, minutes: 0 });
+
+    const jerome = employeeOf(body, "take-shift-owner");
+    expectResolvesTo(roster, jerome, { employeeNumber: JEROME, name: operatorOf(roster, JEROME).name });
+    expect(ownerOfShift(roster, STEP_5.take).employeeNumber).toBe(JEROME);
+    expect(jerome.findings).toEqual([]);
+    expect(jerome.offDutyBefore).toMatchObject({ hours: 156, minutes: 0 });
+    expect(jerome.offDutyAfter).toMatchObject({ hours: 36, minutes: 0 });
+  });
+
+  test("criterion 4, API half: Jerome's window 2027-03-07 to 03-13 is 47 h, the 13 Mar night shift being 11 h", async () => {
+    const roster = readSampleRoster();
+    const body = cannotBeApproved(await swapCheck(STEP_5, roster));
+    const jerome = employeeOf(body, "take-shift-owner");
+
+    expect(roster.shifts.some((shift) => shift.shiftId === "CDU-FLD1-0313-N")).toBe(true);
+    expect(windowFrom(jerome, "2027-03-07")).toEqual({
+      from: "2027-03-07",
+      to: "2027-03-13",
+      hours: 47,
+      minutes: 0,
+      changedBySwap: true,
+    });
+  });
+
+  test.each([
+    ["Step 3", STEP_3],
+    ["Step 4", STEP_4],
+    ["Step 5", STEP_5],
+    ["Step 6", STEP_6],
+  ])("criterion 1: %s, each employee has 22 windows, 2027-03-01 to 03-22, none past coverage.to", async (_label, pick) => {
+    const roster = readSampleRoster();
+    const body = cannotBeApproved(await swapCheck(pick, roster));
+    expect(body.employees).toHaveLength(2);
+    for (const employee of body.employees) {
+      expect(employee.windows).toHaveLength(22);
+      expect(employee.windows.map((window) => window.from)).toEqual(
+        Array.from({ length: 22 }, (_unused, index) => plusDays(roster.coverage.from, index)),
+      );
+      for (const window of employee.windows) {
+        expect(window.to).toBe(plusDays(window.from, 6));
+      }
+      expect(employee.windows[21]?.to).toBe(roster.coverage.to);
+    }
+  });
+
+  test("criterion 6: an existing window of 84 h the swap does not change is a § 3.2 finding with changedBySwap false", async () => {
+    const roster = unchangedWindowRoster();
+    const response = await swapCheck(STEP_1, roster);
+    const body = cannotBeApproved(response);
+
+    // Exactly one finding across both employees, and none under § 3.1 or § 3.3.
+    expect(allFindings(body)).toHaveLength(1);
+    expect(allFindings(body).filter((finding) => finding.rule === "3.1" || finding.rule === "3.3")).toEqual([]);
+
+    const luis = employeeOf(body, "take-shift-owner");
+    expectResolvesTo(roster, luis, { employeeNumber: LUIS, name: operatorOf(roster, LUIS).name });
+    expect(ownerOfShift(roster, STEP_1.take).employeeNumber).toBe(LUIS);
+    expect(luis.findings).toEqual([
+      {
+        rule: "3.2",
+        code: "seven-day-hours-over-maximum",
+        changedBySwap: false,
+        maximumHours: SEVEN_DAY_MAXIMUM,
+        from: "2027-03-22",
+        to: "2027-03-28",
+        hours: 84,
+        minutes: 0,
+      },
+    ]);
+    expect(windowFrom(luis, "2027-03-22")).toMatchObject({ hours: 84, minutes: 0, changedBySwap: false });
+    expect(windowFrom(luis, "2027-03-20")).toMatchObject({ hours: 72, minutes: 0 });
+    expect(windowFrom(luis, "2027-03-21")).toMatchObject({ hours: 72, minutes: 0 });
+
+    const maya = employeeOf(body, "give-shift-owner");
+    expectResolvesTo(roster, maya, { employeeNumber: MAYA, name: operatorOf(roster, MAYA).name });
+    expect(maya.findings).toEqual([]);
+  });
+
+  test.each([
+    ["step-5.json", STEP_5, readSampleRoster],
+    ["unchanged-window-hours.json", STEP_1, unchangedWindowRoster],
+  ])("criterion 11: %s is the 200 body for its pick", async (fixture, pick, build) => {
+    const response = await swapCheck(pick, build());
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(readFixture(fixture));
+  });
+
+  test("the shared fixtures carry the independently computed window figures", () => {
+    const figures: [string, EmployeeEvaluation["party"], { sumMinutes: number; changed: number; maxHours: number }][] = [
+      ["step-5.json", "give-shift-owner", { sumMinutes: 744 * 60, changed: 14, maxHours: 84 }],
+      ["step-5.json", "take-shift-owner", { sumMinutes: 389 * 60, changed: 14, maxHours: 47 }],
+      ["unchanged-window-hours.json", "give-shift-owner", { sumMinutes: 684 * 60, changed: 8, maxHours: 48 }],
+      ["unchanged-window-hours.json", "take-shift-owner", { sumMinutes: 936 * 60, changed: 8, maxHours: 84 }],
+    ];
+    for (const [fixture, party, expected] of figures) {
+      const employee = employeeOf(readFixture(fixture) as CannotBeApprovedBody, party);
+      expect(employee.windows).toHaveLength(22);
+      expect(employee.windows.reduce((sum, window) => sum + window.hours * 60 + window.minutes, 0)).toBe(
+        expected.sumMinutes,
+      );
+      expect(employee.windows.filter((window) => window.changedBySwap)).toHaveLength(expected.changed);
+      expect(Math.max(...employee.windows.map((window) => window.hours))).toBe(expected.maxHours);
+    }
+  });
+});
+
 describe("precedence: refusals, then cannot-determine, then the evaluation", () => {
   test("a stale clock on the Step 4 pick gives cannot-determine with export-stale, not cannot-be-approved", async () => {
     const response = await swapCheck(STEP_4, readSampleRoster(), STALE_NOW);
@@ -412,9 +568,11 @@ describe("body privacy (NFR-PRIV-001): no employee number in any 200 body", () =
   const cases: [string, SwapPick, () => Roster][] = [
     ["Step 3", STEP_3, readSampleRoster],
     ["Step 4", STEP_4, readSampleRoster],
+    ["Step 5", STEP_5, readSampleRoster],
     ["Step 6", STEP_6, readSampleRoster],
     ["the § 3.1 and § 3.3 listing roster", STEP_6, failListingRoster],
     ["the unchanged rest roster", STEP_1, unchangedRestRoster],
+    ["the unchanged-window roster", STEP_1, unchangedWindowRoster],
     ["the unchanged-shift qualification roster", STEP_2, unchangedShiftQualificationRoster],
   ];
 
