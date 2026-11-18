@@ -17,10 +17,12 @@ import shifts102286Raw from "../../../../fixtures/responses/shifts-102286.json?r
 import shifts104417Raw from "../../../../fixtures/responses/shifts-104417.json?raw";
 import step3Raw from "../../../../fixtures/responses/step-3.json?raw";
 import step4Raw from "../../../../fixtures/responses/step-4.json?raw";
+import step5Raw from "../../../../fixtures/responses/step-5.json?raw";
 import step6Raw from "../../../../fixtures/responses/step-6.json?raw";
 import step7Raw from "../../../../fixtures/responses/step-7.json?raw";
 import step8Raw from "../../../../fixtures/responses/step-8.json?raw";
 import unchangedShiftRaw from "../../../../fixtures/responses/unchanged-shift-qualification.json?raw";
+import unchangedWindowRaw from "../../../../fixtures/responses/unchanged-window-hours.json?raw";
 
 /** The shared response fixtures, parsed once, for assertions in view tests. */
 export const fixtures = {
@@ -30,8 +32,10 @@ export const fixtures = {
   step8: JSON.parse(step8Raw) as RefusedResponse,
   step3: JSON.parse(step3Raw) as CannotBeApprovedResponse,
   step4: JSON.parse(step4Raw) as CannotBeApprovedResponse,
+  step5: JSON.parse(step5Raw) as CannotBeApprovedResponse,
   step6: JSON.parse(step6Raw) as CannotBeApprovedResponse,
   unchangedShift: JSON.parse(unchangedShiftRaw) as CannotBeApprovedResponse,
+  unchangedWindow: JSON.parse(unchangedWindowRaw) as CannotBeApprovedResponse,
   step7: JSON.parse(step7Raw) as CannotDetermineResponse,
   add3: JSON.parse(add3Raw) as CannotDetermineResponse,
   staleAndHorizon: JSON.parse(staleAndHorizonRaw) as CannotDetermineResponse,
