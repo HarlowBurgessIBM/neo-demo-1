@@ -10,6 +10,7 @@ import type {
 import add3Raw from "../../../../fixtures/responses/add-3.json?raw";
 import missingExportedAtRaw from "../../../../fixtures/responses/cannot-determine-missing-exported-at.json?raw";
 import nowBeforeExportRaw from "../../../../fixtures/responses/cannot-determine-now-before-export.json?raw";
+import shiftEndNotAfterStartRaw from "../../../../fixtures/responses/cannot-determine-shift-end-not-after-start.json?raw";
 import staleAndHorizonRaw from "../../../../fixtures/responses/cannot-determine-stale-and-horizon.json?raw";
 import devUsersRaw from "../../../../fixtures/responses/dev-users.json?raw";
 import shifts102286Raw from "../../../../fixtures/responses/shifts-102286.json?raw";
@@ -36,6 +37,7 @@ export const fixtures = {
   staleAndHorizon: JSON.parse(staleAndHorizonRaw) as CannotDetermineResponse,
   nowBeforeExport: JSON.parse(nowBeforeExportRaw) as CannotDetermineResponse,
   missingExportedAt: JSON.parse(missingExportedAtRaw) as CannotDetermineResponse,
+  shiftEndNotAfterStart: JSON.parse(shiftEndNotAfterStartRaw) as CannotDetermineResponse,
 };
 
 /** The pick the step-8 fixture answers: a CDU shift given for an FCC shift, which is outside the pilot. */

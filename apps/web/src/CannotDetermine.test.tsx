@@ -157,6 +157,7 @@ describe("accessibility of each cannot-determine view (C13, NFR-A11Y-001)", () =
     { name: "outside the horizon (add-3.json)", body: fixtures.add3, pick: HORIZON_PICK },
     { name: "several reasons", body: fixtures.staleAndHorizon, pick: STEP_7_PICK },
     { name: "now before the export", body: fixtures.nowBeforeExport, pick: STEP_7_PICK },
+    { name: "a shift that ends at or before it starts", body: fixtures.shiftEndNotAfterStart, pick: STEP_7_PICK },
   ];
 
   test.each(cases)("$name has the heading, one item per reason and no axe-core WCAG A/AA violations", async ({
@@ -176,6 +177,26 @@ describe("accessibility of each cannot-determine view (C13, NFR-A11Y-001)", () =
     expect(fixtures.shifts104417.take.map((shift) => shift.shiftId)).toContain(HORIZON_PICK.takeShiftId);
     expect(section.textContent).toContain("CDU-CON1-0326-D");
     expect(section.textContent).toContain("2027-03-07 to 2027-03-22");
+  });
+});
+
+describe("a shift that ends at or before it starts (invalid-export-field, shifts.end)", () => {
+  test("says in plain words whose shift it is and which shift, without the words role or unit", async () => {
+    const [reason] = fixtures.shiftEndNotAfterStart.reasons;
+    if (reason?.code !== "invalid-export-field" || reason.field !== "shifts.end") {
+      throw new Error("The fixture's first reason is not a shifts.end invalid-export-field reason.");
+    }
+    expect(reason.party).toBe("take-shift-owner");
+
+    const { section } = await renderCannotDetermine(fixtures.shiftEndNotAfterStart);
+
+    const items = within(section).getAllByRole("listitem");
+    expect(items).toHaveLength(fixtures.shiftEndNotAfterStart.reasons.length);
+    const text = items[0]?.textContent ?? "";
+    expect(text).toBe(
+      `In the roster export, the other employee's shift ${reason.shiftId} ends at or before it starts.`,
+    );
+    expect(text).not.toMatch(/role|unit/i);
   });
 });
 
