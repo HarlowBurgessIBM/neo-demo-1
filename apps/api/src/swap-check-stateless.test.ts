@@ -10,6 +10,7 @@ import {
   fixedNow,
   headersFor,
   readFixture,
+  readSampleRoster,
   SAMPLE_NOW_ISO,
   SAMPLE_ROSTER_PATH,
   sampleSweepPicks,
@@ -18,19 +19,31 @@ import {
   type SwapPick,
 } from "./test-support";
 
-// Issue #8, criterion 9 (ADD-5), API part: nothing is stored. After every request of criteria
-// 2-5 and 8, sent to a freshly built app:
-//  - no route other than the four exists;
-//  - the same request returns an identical body on a second app instance;
-//  - the SHA-256 of data/roster.sample.json is unchanged.
+// Issue #8, criterion 9 (ADD-5), API part: nothing is stored. Every request of criteria 2-5 and 8
+// is sent to two freshly built apps, and then:
+//  - after the full pass, no route other than the four exists on either app;
+//  - each request returns an identical body on the second app instance, compared as it goes;
+//  - after the full pass, the SHA-256 and mtime of data/roster.sample.json are unchanged.
 // Both apps read the real file on every request. Failures are collected, then asserted empty, so
-// one mismatch does not hide the others. Messages name shift ids only, never an employee number
-// or a name (NFR-PRIV-001).
+// one mismatch does not hide the others. Failure output names shift ids and request labels only,
+// never an employee number or a name (NFR-PRIV-001): bodies are compared as booleans, not printed.
+//
+// Known limit of "second app instance": both apps live in one process, so a module-level cache
+// shared by the two would be invisible here. The app code has none.
 
 const SETUP_TIMEOUT_MS = 120_000;
 const TEST_TIMEOUT_MS = 120_000;
 
-const FOUR_ROUTES = ["GET /api/dev/users", "GET /api/healthz", "GET /api/shifts", "POST /api/swap-checks"];
+const FOUR_ROUTES: { method: "GET" | "POST"; url: string }[] = [
+  { method: "GET", url: "/api/dev/users" },
+  { method: "GET", url: "/api/healthz" },
+  { method: "GET", url: "/api/shifts" },
+  { method: "POST", url: "/api/swap-checks" },
+];
+const FOUR_ROUTE_KEYS: string[] = FOUR_ROUTES.map((route) => `${route.method} ${route.url}`).sort();
+
+/** The statuses a swap check may answer with: an answer, or a 422 refusal. Never a 5xx. */
+const KNOWN_STATUSES = [200, 422];
 
 /** The earlier requests, by name, with the fixture each one answers with. */
 const NAMED: { name: string; pick: SwapPick; fixture: string }[] = [
@@ -111,9 +124,28 @@ function send(app: FastifyInstance, pick: SwapPick): Promise<LightMyRequestRespo
   });
 }
 
-function parsedBody(response: LightMyRequestResponse): unknown {
-  const body: unknown = JSON.parse(response.payload);
-  return body;
+/** The parsed payload, or `undefined` when it is empty or not JSON. Never throws, so no payload text reaches an error. */
+function parsedBody(payload: string): unknown {
+  try {
+    const body: unknown = JSON.parse(payload);
+    return body;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The number of ordered cross-owner pairs, n² minus the sum over owners of (their shifts)². */
+function expectedSweepSize(): number {
+  const { shifts } = readSampleRoster();
+  const perOwner = new Map<string, number>();
+  for (const shift of shifts) {
+    perOwner.set(shift.employeeNumber, (perOwner.get(shift.employeeNumber) ?? 0) + 1);
+  }
+  let sameOwnerPairs = 0;
+  for (const count of perOwner.values()) {
+    sameOwnerPairs += count * count;
+  }
+  return shifts.length * shifts.length - sameOwnerPairs;
 }
 
 describe("criterion 9 (API): nothing is stored across app instances", () => {
@@ -148,7 +180,19 @@ describe("criterion 9 (API): nothing is stored across app instances", () => {
       if (fromA.statusCode !== fromB.statusCode) {
         mismatches.push(`${label}: status differs between the two apps`);
       }
-      if (!isDeepStrictEqual(parsedBody(fromA), parsedBody(fromB))) {
+      // Two identical failures would otherwise compare equal: each answer must be a real one.
+      for (const [appName, response] of [
+        ["A", fromA],
+        ["B", fromB],
+      ] as const) {
+        if (!KNOWN_STATUSES.includes(response.statusCode)) {
+          mismatches.push(`${label}: app ${appName} answered a status that is not 200 or 422`);
+        }
+        if (parsedBody(response.payload) === undefined) {
+          mismatches.push(`${label}: app ${appName} answered an empty or non-JSON payload`);
+        }
+      }
+      if (!isDeepStrictEqual(parsedBody(fromA.payload), parsedBody(fromB.payload))) {
         mismatches.push(`${label}: parsed body differs between the two apps`);
       }
       if (fromA.payload !== fromB.payload) {
@@ -199,7 +243,10 @@ describe("criterion 9 (API): nothing is stored across app instances", () => {
   test(
     "the compared requests are Steps 1 and 2, ADD-6, ADD-3 and every sweep pick",
     () => {
-      expect(sweepPicks.length).toBeGreaterThan(0);
+      // The sweep size is worked out from the roster, not from the helper, so a sampled
+      // `sampleSweepPicks()` would fail here.
+      expect(sweepPicks.length).toBe(expectedSweepSize());
+      expect(sweepPicks.length).toBeGreaterThan(4_000);
       expect(compared).toBe(4 + sweepPicks.length);
     },
     TEST_TIMEOUT_MS,
@@ -210,8 +257,8 @@ describe("criterion 9 (API): nothing is stored across app instances", () => {
     () => {
       expect(appA).toBeDefined();
       expect(appB).toBeDefined();
-      expect([...(appA?.seen ?? [])].sort()).toEqual(FOUR_ROUTES);
-      expect([...(appB?.seen ?? [])].sort()).toEqual(FOUR_ROUTES);
+      expect([...(appA?.seen ?? [])].sort()).toEqual(FOUR_ROUTE_KEYS);
+      expect([...(appB?.seen ?? [])].sort()).toEqual(FOUR_ROUTE_KEYS);
     },
     TEST_TIMEOUT_MS,
   );
@@ -220,15 +267,11 @@ describe("criterion 9 (API): nothing is stored across app instances", () => {
     "after every request each app still lists exactly the four routes, and none was added",
     () => {
       expect(afterPassRoutes).toBeDefined();
-      expect(afterPassRoutes?.a).toEqual(FOUR_ROUTES);
-      expect(afterPassRoutes?.b).toEqual(FOUR_ROUTES);
+      expect(afterPassRoutes?.a).toEqual(FOUR_ROUTE_KEYS);
+      expect(afterPassRoutes?.b).toEqual(FOUR_ROUTE_KEYS);
       for (const built of [appA, appB]) {
-        for (const key of FOUR_ROUTES) {
-          const [method, url] = key.split(" ");
-          expect(
-            method !== undefined && url !== undefined && built?.app.hasRoute({ method: method as "GET" | "POST", url }),
-            key,
-          ).toBe(true);
+        for (const route of FOUR_ROUTES) {
+          expect(built?.app.hasRoute(route), `${route.method} ${route.url}`).toBe(true);
         }
       }
       expect(afterPassRoutes?.seenA).toBe(appA?.seenAtReady);
@@ -250,9 +293,11 @@ describe("criterion 9 (API): nothing is stored across app instances", () => {
     "repeating Steps 1 and 2, ADD-6 and ADD-3 on the first app after the sweep gives byte-identical bodies",
     () => {
       expect(firstPayloads.size).toBe(NAMED.length);
+      // Booleans, so a failure prints the label and never a response body.
       for (const { name } of NAMED) {
-        expect(repeatPayloads.get(name), name).toBeDefined();
-        expect(repeatPayloads.get(name), name).toBe(firstPayloads.get(name));
+        const repeated = repeatPayloads.get(name);
+        expect(repeated !== undefined, `${name}: no repeat response`).toBe(true);
+        expect(repeated === firstPayloads.get(name), `${name}: repeat differs from the first answer`).toBe(true);
       }
     },
     TEST_TIMEOUT_MS,
@@ -263,15 +308,17 @@ describe("criterion 9 (API): nothing is stored across app instances", () => {
     () => {
       for (const { name, fixture } of NAMED) {
         const repeated = repeatPayloads.get(name);
-        expect(repeated, name).toBeDefined();
-        expect(JSON.parse(repeated ?? "null"), name).toEqual(readFixture(fixture));
+        expect(repeated !== undefined, `${name}: no repeat response`).toBe(true);
+        const body = parsedBody(repeated ?? "");
+        expect(body !== undefined, `${name}: repeated payload is empty or not JSON`).toBe(true);
+        expect(isDeepStrictEqual(body, readFixture(fixture)), `${name}: repeated body differs from ${fixture}`).toBe(true);
       }
     },
     TEST_TIMEOUT_MS,
   );
 
   test(
-    "data/roster.sample.json has the same SHA-256 and mtime after every request",
+    "data/roster.sample.json has the same SHA-256 and mtime after the full pass",
     () => {
       expect(before).toBeDefined();
       expect(after).toBeDefined();
