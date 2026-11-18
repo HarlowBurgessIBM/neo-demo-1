@@ -1,11 +1,12 @@
 import type {
+  ApprovedWithoutReviewResponse,
   CannotBeApprovedResponse,
   CannotDetermineResponse,
   DevUsersResponse,
   ForbiddenResponse,
   Identity,
-  NotEvaluatedResponse,
   RefusedResponse,
+  ReviewRequiredResponse,
   RosterUnavailableResponse,
   ShiftsResponse,
   SwapPick,
@@ -35,9 +36,10 @@ export type GetResult<T> = { kind: "ok"; data: T } | Unauthenticated | Forbidden
 
 export type SwapCheckResult =
   | { kind: "refused"; body: RefusedResponse }
-  | { kind: "not-evaluated"; body: NotEvaluatedResponse }
   | { kind: "cannot-determine"; body: CannotDetermineResponse }
   | { kind: "cannot-be-approved"; body: CannotBeApprovedResponse }
+  | { kind: "approved-without-review"; body: ApprovedWithoutReviewResponse }
+  | { kind: "review-required"; body: ReviewRequiredResponse }
   | RosterUnavailable
   | Unauthenticated
   | Forbidden
@@ -66,10 +68,6 @@ function isRefusedBody(body: unknown): body is RefusedResponse {
   const reasons = body["reasons"];
   // Each reason must be an object with a string code, so the view can always read `code`.
   return Array.isArray(reasons) && reasons.every((reason) => isRecord(reason) && typeof reason["code"] === "string");
-}
-
-function isNotEvaluatedBody(body: unknown): body is NotEvaluatedResponse {
-  return isRecord(body) && body["kind"] === "not-evaluated";
 }
 
 function isStringOrNull(value: unknown): value is string | null {
@@ -181,11 +179,45 @@ function isFinding(value: unknown): boolean {
   }
 }
 
+/**
+ * Checks the fields the view reads from a § 4.2 trigger, per rule. As with findings, a trigger with
+ * a rule this build does not know is accepted when it has a string rule and code and a boolean
+ * `changedBySwap`, so the view's fallback stays reachable.
+ */
+function isReviewTrigger(value: unknown): boolean {
+  if (!isRecord(value) || !isString(value["rule"]) || !isString(value["code"])) {
+    return false;
+  }
+  switch (value["rule"]) {
+    case "4.2(a)":
+      return (
+        value["code"] === "off-duty-under-review-threshold" &&
+        typeof value["changedBySwap"] === "boolean" &&
+        value["thresholdHours"] === 12 &&
+        (value["overlap"] === undefined || value["overlap"] === true) &&
+        isOffDutyPeriod(value)
+      );
+    case "4.2(b)":
+      return (
+        value["code"] === "seven-day-hours-over-review-threshold" &&
+        typeof value["changedBySwap"] === "boolean" &&
+        value["thresholdHours"] === 60 &&
+        isString(value["from"]) &&
+        isString(value["to"]) &&
+        isWholeHours(value["hours"]) &&
+        isWholeMinutes(value["minutes"])
+      );
+    default:
+      return typeof value["changedBySwap"] === "boolean";
+  }
+}
+
 function isEmployeeResult(value: unknown): boolean {
   if (!isRecord(value)) {
     return false;
   }
   const findings = value["findings"];
+  const triggers = value["triggers"];
   const windows = value["windows"];
   // The view reads these fields directly, so each must have the type it is read as.
   return (
@@ -197,15 +229,15 @@ function isEmployeeResult(value: unknown): boolean {
     windows.every(isSevenDayWindow) &&
     Array.isArray(findings) &&
     findings.every(isFinding) &&
+    Array.isArray(triggers) &&
+    triggers.every(isReviewTrigger) &&
     isOptionalOffDutyPeriod(value["offDutyBefore"]) &&
     isOptionalOffDutyPeriod(value["offDutyAfter"])
   );
 }
 
-function isCannotBeApprovedBody(body: unknown): body is CannotBeApprovedResponse {
-  if (!isRecord(body) || body["outcome"] !== "cannot-be-approved") {
-    return false;
-  }
+/** The shape the three outcomes that evaluate the swap share: a guidance text, the export stamp and two employees. */
+function hasEvaluationShape(body: Record<string, unknown>): boolean {
   const employees = body["employees"];
   return (
     typeof body["guidance"] === "string" &&
@@ -217,6 +249,18 @@ function isCannotBeApprovedBody(body: unknown): body is CannotBeApprovedResponse
     isStringOrNull(body["exportedAtSiteLocal"]) &&
     isStringOrNull(body["siteTimeZone"])
   );
+}
+
+function isCannotBeApprovedBody(body: unknown): body is CannotBeApprovedResponse {
+  return isRecord(body) && body["outcome"] === "cannot-be-approved" && hasEvaluationShape(body);
+}
+
+function isApprovedWithoutReviewBody(body: unknown): body is ApprovedWithoutReviewResponse {
+  return isRecord(body) && body["outcome"] === "approved-without-review" && hasEvaluationShape(body);
+}
+
+function isReviewRequiredBody(body: unknown): body is ReviewRequiredResponse {
+  return isRecord(body) && body["outcome"] === "review-required" && hasEvaluationShape(body);
 }
 
 function isRosterUnavailableBody(body: unknown): body is RosterUnavailableResponse {
@@ -329,14 +373,17 @@ export async function postSwapCheck(identity: Identity | undefined, pick: SwapPi
   if (outcome.status === 200 && isCannotBeApprovedBody(outcome.body)) {
     return { kind: "cannot-be-approved", body: outcome.body };
   }
+  if (outcome.status === 200 && isApprovedWithoutReviewBody(outcome.body)) {
+    return { kind: "approved-without-review", body: outcome.body };
+  }
+  if (outcome.status === 200 && isReviewRequiredBody(outcome.body)) {
+    return { kind: "review-required", body: outcome.body };
+  }
   if (outcome.status === 503 && isRosterUnavailableBody(outcome.body)) {
     return { kind: "roster-unavailable" };
   }
   if (outcome.status === 422 && isRefusedBody(outcome.body)) {
     return { kind: "refused", body: outcome.body };
-  }
-  if (outcome.status === 501 && isNotEvaluatedBody(outcome.body)) {
-    return { kind: "not-evaluated", body: outcome.body };
   }
   return commonFailure(outcome) ?? httpError(outcome.status);
 }

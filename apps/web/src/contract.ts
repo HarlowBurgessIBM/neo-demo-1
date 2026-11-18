@@ -61,6 +61,8 @@ export type CannotDetermineExportField =
 /** Why a swap could not be checked. Every value is shown as the API sent it. */
 export type CannotDetermineReason =
   | { code: "invalid-now" }
+  // The checks passed, but the swap could not be classified.
+  | { code: "not-evaluable" }
   | {
       code: "invalid-export-field";
       field: CannotDetermineExportField;
@@ -177,7 +179,33 @@ export interface SevenDayHoursFinding {
 
 export type Finding = OffDutyFinding | SevenDayHoursFinding | QualificationFinding;
 
-/** One employee's part of a cannot-be-approved result. "You" is always the give party. */
+/**
+ * A § 4.2(a) review trigger: an off-duty period under the review threshold. `overlap` is present
+ * only when the shifts overlap.
+ */
+export interface OffDutyReviewTrigger extends OffDutyPeriod {
+  rule: "4.2(a)";
+  code: "off-duty-under-review-threshold";
+  changedBySwap: boolean;
+  thresholdHours: 12;
+  overlap?: true;
+}
+
+/** A § 4.2(b) review trigger: a seven-day window over the review threshold. */
+export interface SevenDayReviewTrigger {
+  rule: "4.2(b)";
+  code: "seven-day-hours-over-review-threshold";
+  changedBySwap: boolean;
+  thresholdHours: 60;
+  from: string;
+  to: string;
+  hours: number;
+  minutes: number;
+}
+
+export type ReviewTrigger = OffDutyReviewTrigger | SevenDayReviewTrigger;
+
+/** One employee's part of a swap check result. "You" is always the give party. */
 export interface EmployeeResult {
   party: CannotDetermineParty;
   /** Null when the roster has no name for the employee. */
@@ -190,6 +218,8 @@ export interface EmployeeResult {
   /** Every seven-day window in coverage; empty when coverage is shorter than seven dates. */
   windows: SevenDayWindow[];
   findings: Finding[];
+  /** The § 4.2 review triggers for this employee. */
+  triggers: ReviewTrigger[];
 }
 
 /** 200. The swap fails § 3.1, § 3.2 or § 3.3 and cannot be approved. `outcome` marks a swap check answer. */
@@ -203,14 +233,34 @@ export interface CannotBeApprovedResponse {
   employees: EmployeeResult[];
 }
 
+/**
+ * 200. The swap meets § 3 and triggers nothing in § 4.2, so § 4.3 lets it be approved without review.
+ * This is a classification only. `outcome` marks a swap check answer.
+ */
+export interface ApprovedWithoutReviewResponse {
+  outcome: "approved-without-review";
+  exportedAt: string | null;
+  exportedAtUtcMinute: string | null;
+  exportedAtSiteLocal: string | null;
+  siteTimeZone: string | null;
+  guidance: string;
+  employees: EmployeeResult[];
+}
+
+/** 200. The swap meets § 3 but triggers § 4.2, so a supervisor must review it. `outcome` marks a swap check answer. */
+export interface ReviewRequiredResponse {
+  outcome: "review-required";
+  exportedAt: string | null;
+  exportedAtUtcMinute: string | null;
+  exportedAtSiteLocal: string | null;
+  siteTimeZone: string | null;
+  guidance: string;
+  employees: EmployeeResult[];
+}
+
 /** 503. The roster could not be read. The body carries no other detail. */
 export interface RosterUnavailableResponse {
   code: "roster-unavailable";
-}
-
-/** 501. Evaluation is not wired in yet. */
-export interface NotEvaluatedResponse {
-  kind: "not-evaluated";
 }
 
 /** 403. The caller is known but not allowed. */

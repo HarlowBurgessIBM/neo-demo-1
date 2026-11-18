@@ -298,43 +298,56 @@ describe("refusal from the fixture file (C15)", () => {
   });
 });
 
-describe("not evaluated (501)", () => {
-  const notEvaluated: FixtureFetchOptions = {
-    swapCheck: (_call, requested) =>
-      requested?.giveShiftId === GIVE_PICK && requested.takeShiftId === "CDU-CON1-0319-N"
-        ? { status: 501, body: { kind: "not-evaluated" } }
-        : undefined,
-  };
+const STEP_1_PICK = { giveShiftId: GIVE_PICK, takeShiftId: "CDU-CON1-0319-N" };
 
-  async function renderNotEvaluated() {
-    const rendered = await renderWithUsersLoaded(notEvaluated);
+describe("the interim 501 is gone", () => {
+  test("a 501 is an unexpected status, shown on the picker like any other", async () => {
+    await renderWithUsersLoaded({
+      swapCheck: (_call, requested) =>
+        requested?.giveShiftId === STEP_1_PICK.giveShiftId && requested.takeShiftId === STEP_1_PICK.takeShiftId
+          ? { status: 501, body: { kind: "not-evaluated" } }
+          : undefined,
+    });
     await chooseUser("104417");
-    pick(GIVE_PICK, "CDU-CON1-0319-N");
+    pick(STEP_1_PICK.giveShiftId, STEP_1_PICK.takeShiftId);
     checkSwap();
-    const section = await screen.findByRole("region", { name: "Not evaluated" });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("Could not check the swap. The server answered with an unexpected status (501).");
+    expect(screen.queryByRole("region", { name: "Not evaluated" })).toBeNull();
+    expect(screen.getByRole("form", { name: "Choose the shifts to swap" })).toBeTruthy();
+  });
+});
+
+describe("approved without review (step-1.json)", () => {
+  async function renderApproved() {
+    const rendered = await renderWithUsersLoaded({
+      swapCheck: (_call, requested) =>
+        requested?.giveShiftId === STEP_1_PICK.giveShiftId && requested.takeShiftId === STEP_1_PICK.takeShiftId
+          ? { status: 200, body: fixtures.step1 }
+          : undefined,
+    });
+    await chooseUser("104417");
+    pick(STEP_1_PICK.giveShiftId, STEP_1_PICK.takeShiftId);
+    checkSwap();
+    const section = await screen.findByRole("region", { name: "Approved without review" });
     return { ...rendered, section };
   }
 
-  test("shows the not-evaluated view with the notices and exactly the shipped copy", async () => {
-    const { section } = await renderNotEvaluated();
+  test("shows the guidance, the notices and Choose again as the only control", async () => {
+    const { section } = await renderApproved();
 
-    expect(within(section).getByRole("heading", { level: 2, name: "Not evaluated" })).toBeTruthy();
-    expect(screen.queryByRole("region", { name: "Swap refused" })).toBeNull();
+    expect(within(section).getByRole("heading", { level: 2, name: "Approved without review" })).toBeTruthy();
+    expect(section.textContent).toContain(fixtures.step1.guidance);
     const notices = screen.getByRole("complementary", { name: "Pilot notices" });
     for (const text of NOTICE_TEXT) {
       expect(notices.textContent).toContain(text);
     }
-    // Heading, paragraph and the "Choose again" button, in order. Any other wording is a copy change to review.
-    expect(section.textContent).toBe(
-      "Not evaluated" +
-        "The pick passed the pilot-scope checks. Evaluation is not available yet." +
-        "Choose again",
-    );
-    expect(section.textContent).not.toMatch(/outcome/i);
+    expect(within(section).getAllByRole("button").map((button) => button.textContent)).toEqual(["Choose again"]);
   });
 
-  test("the not-evaluated view has no axe-core WCAG A/AA violations", async () => {
-    const { container } = await renderNotEvaluated();
+  test("has no axe-core WCAG A/AA violations", async () => {
+    const { container } = await renderApproved();
     expect(await wcagViolations(container)).toEqual([]);
   });
 });

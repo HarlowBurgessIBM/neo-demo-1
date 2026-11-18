@@ -4,31 +4,14 @@ import type {
   EmployeeResult,
   Finding,
   OffDutyFinding,
-  OffDutyPeriod,
   QualificationFinding,
   SevenDayHoursFinding,
 } from "./contract";
+import { EmployeeSchedule, changedText, employeeLabel, formatDuration } from "./EmployeeSchedule";
 
 interface CannotBeApprovedViewProps {
   result: CannotBeApprovedResponse;
   onChooseAgain: () => void;
-}
-
-/** The API's own figures, as sent. The web app never works a duration out from the start and end times. */
-function formatDuration(period: { hours: number; minutes: number }): string {
-  return period.minutes > 0 ? `${period.hours} h ${period.minutes} m` : `${period.hours} h`;
-}
-
-/** The employee's name, or a description of who they are in the swap when the roster has none. */
-function employeeLabel(employee: Pick<EmployeeResult, "name" | "party">): string {
-  if (employee.name !== null) {
-    return employee.name;
-  }
-  return employee.party === "give-shift-owner" ? "You" : "The other employee";
-}
-
-function changedText(finding: { changedBySwap: boolean }): string {
-  return finding.changedBySwap ? "changed by this swap" : "not changed by this swap";
 }
 
 function describeOffDutyFinding(finding: OffDutyFinding): string {
@@ -66,12 +49,6 @@ function describeFinding(finding: Finding): { reference: string; detail: string 
     default:
       return { reference: "§ ?", detail: describeUnrecognisedFinding(finding) };
   }
-}
-
-function describeOffDutyPeriod(period: OffDutyPeriod | null, direction: "before" | "after", shiftId: string): string {
-  return period === null
-    ? `No shift ${direction} ${shiftId} in the export.`
-    : `Off duty ${direction} ${shiftId}: ${formatDuration(period)}.`;
 }
 
 function failuresOf(result: CannotBeApprovedResponse): { employee: EmployeeResult; finding: Finding }[] {
@@ -115,40 +92,11 @@ export function CannotBeApprovedView({ result, onChooseAgain }: CannotBeApproved
         </ul>
       )}
       {result.employees.map((employee, index) => (
-        <div key={index}>
-          <h3>{employeeLabel(employee)}</h3>
-          <ul>
-            <li>
-              Gave {employee.gaveShiftId}, took {employee.tookShiftId}.
-            </li>
-            <li>{describeOffDutyPeriod(employee.offDutyBefore, "before", employee.tookShiftId)}</li>
-            <li>{describeOffDutyPeriod(employee.offDutyAfter, "after", employee.tookShiftId)}</li>
-            {employee.findings.length === 0 ? <li>No failures.</li> : null}
-          </ul>
-          {employee.windows.length === 0 ? null : (
-            <table>
-              <caption>{employeeLabel(employee)}: hours in each seven-day window (§ 3.2, at most 72 h)</caption>
-              <thead>
-                <tr>
-                  <th scope="col">Dates</th>
-                  <th scope="col">Hours</th>
-                  <th scope="col">Changed by the swap</th>
-                </tr>
-              </thead>
-              <tbody>
-                {employee.windows.map((window) => (
-                  <tr key={window.from}>
-                    <td>
-                      {window.from} to {window.to}
-                    </td>
-                    <td>{formatDuration(window)}</td>
-                    <td>{window.changedBySwap ? "Changed" : "Not changed"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+        <EmployeeSchedule
+          key={index}
+          employee={employee}
+          note={employee.findings.length === 0 ? "No failures." : undefined}
+        />
       ))}
       <button type="button" onClick={onChooseAgain}>
         Choose again

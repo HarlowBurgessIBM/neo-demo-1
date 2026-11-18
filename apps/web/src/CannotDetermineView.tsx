@@ -95,6 +95,8 @@ function describeReason(reason: CannotDetermineReason): string {
   switch (reason.code) {
     case "invalid-now":
       return "The current time used for the check is not valid.";
+    case "not-evaluable":
+      return "The roster passed the checks, but this swap could not be evaluated.";
     case "invalid-export-field":
       return "party" in reason ? describeEmployeeFieldProblem(reason) : describeExportProblem(reason.field, reason.problem);
     case "coverage-mismatch":

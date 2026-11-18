@@ -2,21 +2,24 @@ import { useEffect, useRef, useState } from "react";
 import { getDevUsers, getShifts, postSwapCheck } from "./api";
 import type { GetResult, SwapCheckResult } from "./api";
 import type {
+  ApprovedWithoutReviewResponse,
   CannotBeApprovedResponse,
   CannotDetermineResponse,
   DevUser,
   ForbiddenResponse,
   Identity,
   RefusedResponse,
+  ReviewRequiredResponse,
   ShiftsResponse,
   SwapPick,
 } from "./contract";
+import { ApprovedWithoutReviewView } from "./ApprovedWithoutReviewView";
 import { CannotBeApprovedView } from "./CannotBeApprovedView";
 import { CannotDetermineView } from "./CannotDetermineView";
 import { DevUserSwitcher } from "./DevUserSwitcher";
-import { NotEvaluated } from "./NotEvaluated";
 import { Notices } from "./Notices";
 import { RefusalView } from "./RefusalView";
+import { ReviewRequiredView } from "./ReviewRequiredView";
 import { ShiftPicker } from "./ShiftPicker";
 
 function describeFailure(result: Exclude<GetResult<unknown>, { kind: "ok" }>, what: string): string {
@@ -37,7 +40,8 @@ type View =
   | { kind: "refused"; body: RefusedResponse }
   | { kind: "cannot-determine"; body: CannotDetermineResponse }
   | { kind: "cannot-be-approved"; body: CannotBeApprovedResponse }
-  | { kind: "not-evaluated" };
+  | { kind: "approved-without-review"; body: ApprovedWithoutReviewResponse }
+  | { kind: "review-required"; body: ReviewRequiredResponse };
 
 function describeForbidden(code: ForbiddenResponse["code"]): string {
   switch (code) {
@@ -54,12 +58,14 @@ function viewFor(result: SwapCheckResult): View {
   switch (result.kind) {
     case "refused":
       return { kind: "refused", body: result.body };
-    case "not-evaluated":
-      return { kind: "not-evaluated" };
     case "cannot-determine":
       return { kind: "cannot-determine", body: result.body };
     case "cannot-be-approved":
       return { kind: "cannot-be-approved", body: result.body };
+    case "approved-without-review":
+      return { kind: "approved-without-review", body: result.body };
+    case "review-required":
+      return { kind: "review-required", body: result.body };
     case "roster-unavailable":
       return {
         kind: "picker",
@@ -156,7 +162,7 @@ export function App() {
       {isProduction ? null : <DevUserSwitcher users={devUsers} onSelect={handleSelect} />}
       {error === undefined ? null : <p role="alert">{error}</p>}
       {shifts === undefined ? null : (
-        <Notices stamp={view.kind === "cannot-determine" || view.kind === "cannot-be-approved" ? view.body : shifts} />
+        <Notices stamp={view.kind === "picker" || view.kind === "refused" ? shifts : view.body} />
       )}
       {/* Always mounted. Only the pending state and the result are announced, never the form. */}
       <div aria-live="polite">
@@ -167,8 +173,10 @@ export function App() {
           <CannotDetermineView result={view.body} onChooseAgain={handleChooseAgain} />
         ) : view.kind === "cannot-be-approved" ? (
           <CannotBeApprovedView result={view.body} onChooseAgain={handleChooseAgain} />
-        ) : view.kind === "not-evaluated" ? (
-          <NotEvaluated onChooseAgain={handleChooseAgain} />
+        ) : view.kind === "approved-without-review" ? (
+          <ApprovedWithoutReviewView result={view.body} onChooseAgain={handleChooseAgain} />
+        ) : view.kind === "review-required" ? (
+          <ReviewRequiredView result={view.body} onChooseAgain={handleChooseAgain} />
         ) : null}
       </div>
       {shifts === undefined ? null : (

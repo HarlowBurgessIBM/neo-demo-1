@@ -1,13 +1,16 @@
 import { vi } from "vitest";
 import type {
+  ApprovedWithoutReviewResponse,
   CannotBeApprovedResponse,
   CannotDetermineResponse,
   DevUsersResponse,
   RefusedResponse,
+  ReviewRequiredResponse,
   ShiftsResponse,
   SwapPick,
 } from "../contract";
 import add3Raw from "../../../../fixtures/responses/add-3.json?raw";
+import add6Raw from "../../../../fixtures/responses/add-6.json?raw";
 import missingExportedAtRaw from "../../../../fixtures/responses/cannot-determine-missing-exported-at.json?raw";
 import nowBeforeExportRaw from "../../../../fixtures/responses/cannot-determine-now-before-export.json?raw";
 import shiftEndNotAfterStartRaw from "../../../../fixtures/responses/cannot-determine-shift-end-not-after-start.json?raw";
@@ -15,6 +18,8 @@ import staleAndHorizonRaw from "../../../../fixtures/responses/cannot-determine-
 import devUsersRaw from "../../../../fixtures/responses/dev-users.json?raw";
 import shifts102286Raw from "../../../../fixtures/responses/shifts-102286.json?raw";
 import shifts104417Raw from "../../../../fixtures/responses/shifts-104417.json?raw";
+import step1Raw from "../../../../fixtures/responses/step-1.json?raw";
+import step2Raw from "../../../../fixtures/responses/step-2.json?raw";
 import step3Raw from "../../../../fixtures/responses/step-3.json?raw";
 import step4Raw from "../../../../fixtures/responses/step-4.json?raw";
 import step5Raw from "../../../../fixtures/responses/step-5.json?raw";
@@ -30,6 +35,9 @@ export const fixtures = {
   shifts104417: JSON.parse(shifts104417Raw) as ShiftsResponse,
   shifts102286: JSON.parse(shifts102286Raw) as ShiftsResponse,
   step8: JSON.parse(step8Raw) as RefusedResponse,
+  step1: JSON.parse(step1Raw) as ApprovedWithoutReviewResponse,
+  step2: JSON.parse(step2Raw) as ReviewRequiredResponse,
+  add6: JSON.parse(add6Raw) as ReviewRequiredResponse,
   step3: JSON.parse(step3Raw) as CannotBeApprovedResponse,
   step4: JSON.parse(step4Raw) as CannotBeApprovedResponse,
   step5: JSON.parse(step5Raw) as CannotBeApprovedResponse,
