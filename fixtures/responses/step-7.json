@@ -1,0 +1,15 @@
+{
+  "outcome": "cannot-determine",
+  "exportedAt": "2027-03-07T08:00:00Z",
+  "exportedAtUtcMinute": "2027-03-07T08:00Z",
+  "exportedAtSiteLocal": "2027-03-07T02:00",
+  "siteTimeZone": "America/Chicago",
+  "reasons": [
+    {
+      "code": "export-stale",
+      "ageHours": 28,
+      "ageMinutes": 0,
+      "limitHours": 26
+    }
+  ]
+}

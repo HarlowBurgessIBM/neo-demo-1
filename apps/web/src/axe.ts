@@ -1,7 +1,7 @@
 import axe from "axe-core";
 
 /**
- * The automated accessibility check named by VE-IT-STD-007 § 4.2: run axe-core
+ * The automated accessibility check named by VE-IT-STD-007 section 4.2: run axe-core
  * against a rendered view, limited to the WCAG A/AA rule tags, and return the
  * violations. A view passes when the returned array is empty.
  */
