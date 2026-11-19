@@ -4,9 +4,11 @@ ShiftSwap lets refinery operators request a shift swap and checks the request ag
 fatigue standard and qualification records before a supervisor sees it. It is a pilot for the
 Crude Distillation Unit (CDU) and Hydrocracker Unit (HCU) at Port Alder Refinery.
 
-**Status: skeleton only.** The toolchain builds, lints, and tests green. No feature is built. The
-company, the refinery, the people, and every document under `docs/standards/` and
-`docs/discovery/` are fictional.
+**Status: Feature 1 is built.** An operator can check a proposed swap by hand and see the result
+for both employees (issue #3). Nothing is stored and there is no approval path. Features 2 to 5
+in `docs/design/requirements/shift-swap-pilot/segmentation.md` are not built. The company, the
+refinery, the people, and every document under `docs/standards/` and `docs/discovery/` are
+fictional.
 
 This file is the source of truth for layout, commands, style, and guardrails.
 
@@ -111,7 +113,8 @@ result that would show it failed.
   `{"code":"roster-unavailable"}`, with no file path in the body, on the routes that need the
   roster (`GET /api/shifts`, `POST /api/swap-checks`, `GET /api/dev/users`). On the
   identity-bearing routes (`GET /api/shifts`, `POST /api/swap-checks`) so does a parseable file
-  whose `operators` is absent or not an array; `GET /api/dev/users` returns an empty list then.
+  whose `operators` is absent or not an array; `GET /api/dev/users` then lists only the
+  supervisors, because it reads `operators` and `supervisors` separately.
   The identity header checks (401, 403) run before the roster is read, so a request without a
   valid identity gets those, not a 503. A missing or bad file does not fail startup. A parseable
   file with missing or invalid fields (export time, coverage, time zone, records) is not a 503:
